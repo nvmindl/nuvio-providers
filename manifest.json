@@ -22,5 +22,30 @@
     "limited": false,
     "disabledPlatforms": [],
     "supportsExternalPlayer": true
+  },
+  {
+    "id": "faselhdx-provider",
+    "name": "FaselHDX",
+    "description": "Scrapes watch/download links from web376x.faselhdx.best",
+    "version": "1.0.0",
+    "author": "GitHub Copilot",
+    "supportedTypes": [
+      "movie",
+      "tv"
+    ],
+    "filename": "providers/faselhdx.js",
+    "enabled": true,
+    "logo": "",
+    "contentLanguage": [
+      "ar",
+      "en"
+    ],
+    "formats": [
+      "m3u8",
+      "mp4"
+    ],
+    "limited": false,
+    "disabledPlatforms": [],
+    "supportsExternalPlayer": true
   }
 ]
