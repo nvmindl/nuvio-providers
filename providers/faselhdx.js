@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-07T08:30:16.627Z
+ * Generated: 2026-03-07T10:03:59.273Z
  */
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -245,7 +245,6 @@ function executeQualityScript(scriptContent) {
       return null;
     }
   };
-  var scope = {};
   var mock$ = function() {
     var r = {};
     r.on = function() {
@@ -283,60 +282,13 @@ function executeQualityScript(scriptContent) {
     };
     return r;
   };
-  scope.document = mockDoc;
-  scope.navigator = { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36" };
-  scope.location = { href: BASE_URL, hostname: "web376x.faselhdx.best" };
-  scope.console = { log: function() {
-  }, warn: function() {
-  }, error: function() {
-  } };
-  scope.parseInt = parseInt;
-  scope.parseFloat = parseFloat;
-  scope.isNaN = isNaN;
-  scope.isFinite = isFinite;
-  scope.String = String;
-  scope.Number = Number;
-  scope.Array = Array;
-  scope.Object = Object;
-  scope.Boolean = Boolean;
-  scope.RegExp = RegExp;
-  scope.Error = Error;
-  scope.TypeError = TypeError;
-  scope.RangeError = RangeError;
-  scope.SyntaxError = SyntaxError;
-  scope.encodeURIComponent = encodeURIComponent;
-  scope.decodeURIComponent = decodeURIComponent;
-  scope.encodeURI = encodeURI;
-  scope.decodeURI = decodeURI;
-  scope.Math = Math;
-  scope.Date = Date;
-  scope.JSON = JSON;
-  scope.undefined = void 0;
-  scope.NaN = NaN;
-  scope.Infinity = Infinity;
-  scope.setTimeout = function() {
-    return 1;
-  };
-  scope.setInterval = function() {
-    return 1;
-  };
-  scope.clearTimeout = function() {
-  };
-  scope.clearInterval = function() {
-  };
-  scope.$ = mock$;
-  scope.jQuery = mock$;
-  scope.Cookies = { get: function() {
-    return null;
-  }, set: function() {
-  } };
-  scope.atob = function(s) {
+  var polyfillAtob = function(s) {
     var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-    var o = "", i = 0;
+    var o = "", i2 = 0;
     s = String(s).replace(/[^A-Za-z0-9+/=]/g, "");
-    while (i < s.length) {
-      var e1 = chars.indexOf(s[i++]), e2 = chars.indexOf(s[i++]);
-      var e3 = chars.indexOf(s[i++]), e4 = chars.indexOf(s[i++]);
+    while (i2 < s.length) {
+      var e1 = chars.indexOf(s[i2++]), e2 = chars.indexOf(s[i2++]);
+      var e3 = chars.indexOf(s[i2++]), e4 = chars.indexOf(s[i2++]);
       var n = e1 << 18 | e2 << 12 | e3 << 6 | e4;
       o += String.fromCharCode(n >> 16 & 255);
       if (e3 !== 64)
@@ -346,13 +298,13 @@ function executeQualityScript(scriptContent) {
     }
     return o;
   };
-  scope.btoa = function(s) {
+  var polyfillBtoa = function(s) {
     var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-    var r = "", i = 0;
-    while (i < s.length) {
-      var a = s.charCodeAt(i++);
-      var b = i < s.length ? s.charCodeAt(i++) : NaN;
-      var c = i < s.length ? s.charCodeAt(i++) : NaN;
+    var r = "", i2 = 0;
+    while (i2 < s.length) {
+      var a = s.charCodeAt(i2++);
+      var b = i2 < s.length ? s.charCodeAt(i2++) : NaN;
+      var c = i2 < s.length ? s.charCodeAt(i2++) : NaN;
       r += chars[a >> 2];
       r += chars[(a & 3) << 4 | b >> 4];
       r += isNaN(b) ? "=" : chars[(b & 15) << 2 | c >> 6];
@@ -360,30 +312,77 @@ function executeQualityScript(scriptContent) {
     }
     return r;
   };
-  var proxyScope = new Proxy(scope, {
-    has: function(target, key) {
-      if (key === Symbol.unscopables)
-        return false;
-      return true;
-    },
-    get: function(target, key) {
-      if (key === Symbol.unscopables)
-        return void 0;
-      if (key in target)
-        return target[key];
-      return void 0;
-    },
-    set: function(target, key, value) {
-      target[key] = value;
-      return true;
-    }
+  var scopeEntries = [
+    ["document", mockDoc],
+    ["navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36" }],
+    ["location", { href: BASE_URL, hostname: "web376x.faselhdx.best" }],
+    ["console", { log: function() {
+    }, warn: function() {
+    }, error: function() {
+    } }],
+    ["parseInt", parseInt],
+    ["parseFloat", parseFloat],
+    ["isNaN", isNaN],
+    ["isFinite", isFinite],
+    ["String", String],
+    ["Number", Number],
+    ["Array", Array],
+    ["Object", Object],
+    ["Boolean", Boolean],
+    ["RegExp", RegExp],
+    ["Function", void 0],
+    ["Error", Error],
+    ["TypeError", TypeError],
+    ["RangeError", RangeError],
+    ["SyntaxError", SyntaxError],
+    ["encodeURIComponent", encodeURIComponent],
+    ["decodeURIComponent", decodeURIComponent],
+    ["encodeURI", encodeURI],
+    ["decodeURI", decodeURI],
+    ["Math", Math],
+    ["Date", Date],
+    ["JSON", JSON],
+    ["NaN", NaN],
+    ["Infinity", Infinity],
+    ["undefined", void 0],
+    ["setTimeout", function() {
+      return 1;
+    }],
+    ["setInterval", function() {
+      return 1;
+    }],
+    ["clearTimeout", function() {
+    }],
+    ["clearInterval", function() {
+    }],
+    ["$", mock$],
+    ["jQuery", mock$],
+    ["Cookies", { get: function() {
+      return null;
+    }, set: function() {
+    } }],
+    ["atob", polyfillAtob],
+    ["btoa", polyfillBtoa]
+  ];
+  var scopeObj = {};
+  for (var i = 0; i < scopeEntries.length; i++) {
+    scopeObj[scopeEntries[i][0]] = scopeEntries[i][1];
+  }
+  scopeObj.window = scopeObj;
+  scopeObj.self = scopeObj;
+  scopeObj.globalThis = scopeObj;
+  scopeEntries.push(["window", scopeObj]);
+  scopeEntries.push(["self", scopeObj]);
+  scopeEntries.push(["globalThis", scopeObj]);
+  var paramNames = scopeEntries.map(function(e) {
+    return e[0];
+  }).join(", ");
+  var paramValues = scopeEntries.map(function(e) {
+    return e[1];
   });
-  scope.window = proxyScope;
-  scope.self = proxyScope;
-  scope.globalThis = proxyScope;
   try {
-    var executor = new Function("scope", "with(scope){\n" + scriptContent + "\n}");
-    executor(proxyScope);
+    var executor = new Function(paramNames, scriptContent);
+    executor.apply(null, paramValues);
   } catch (e) {
   }
   return captured;

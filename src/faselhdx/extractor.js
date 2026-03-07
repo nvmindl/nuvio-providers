@@ -160,8 +160,8 @@ function extractPlayerUrls($) {
  * Execute the quality_change inline script in a sandboxed scope
  * to extract stream URLs from its document.write() output.
  *
- * Uses with(Proxy) + Function() to create a custom variable scope
- * without needing the Node.js vm module — compatible with Hermes.
+ * Uses Function() with named parameters to shadow all globals —
+ * compatible with Hermes (which does not support with()).
  */
 function executeQualityScript(scriptContent) {
     var captured = '';
@@ -173,8 +173,6 @@ function executeQualityScript(scriptContent) {
         querySelectorAll: function() { return []; },
         getElementById: function() { return null; },
     };
-
-    var scope = {};
 
     // jQuery/Cookies stubs
     var mock$ = function() {
@@ -193,44 +191,8 @@ function executeQualityScript(scriptContent) {
         return r;
     };
 
-    scope.document = mockDoc;
-    scope.navigator = { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36' };
-    scope.location = { href: BASE_URL, hostname: 'web376x.faselhdx.best' };
-    scope.console = { log: function(){}, warn: function(){}, error: function(){} };
-    scope.parseInt = parseInt;
-    scope.parseFloat = parseFloat;
-    scope.isNaN = isNaN;
-    scope.isFinite = isFinite;
-    scope.String = String;
-    scope.Number = Number;
-    scope.Array = Array;
-    scope.Object = Object;
-    scope.Boolean = Boolean;
-    scope.RegExp = RegExp;
-    scope.Error = Error;
-    scope.TypeError = TypeError;
-    scope.RangeError = RangeError;
-    scope.SyntaxError = SyntaxError;
-    scope.encodeURIComponent = encodeURIComponent;
-    scope.decodeURIComponent = decodeURIComponent;
-    scope.encodeURI = encodeURI;
-    scope.decodeURI = decodeURI;
-    scope.Math = Math;
-    scope.Date = Date;
-    scope.JSON = JSON;
-    scope.undefined = undefined;
-    scope.NaN = NaN;
-    scope.Infinity = Infinity;
-    scope.setTimeout = function() { return 1; };
-    scope.setInterval = function() { return 1; };
-    scope.clearTimeout = function() {};
-    scope.clearInterval = function() {};
-    scope.$ = mock$;
-    scope.jQuery = mock$;
-    scope.Cookies = { get: function() { return null; }, set: function() {} };
-
-    // atob polyfill (standard base64 — the _0x decoder has its own custom implementation)
-    scope.atob = function(s) {
+    // atob polyfill (standard base64)
+    var polyfillAtob = function(s) {
         var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
         var o = '', i = 0;
         s = String(s).replace(/[^A-Za-z0-9+/=]/g, '');
@@ -244,7 +206,7 @@ function executeQualityScript(scriptContent) {
         }
         return o;
     };
-    scope.btoa = function(s) {
+    var polyfillBtoa = function(s) {
         var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
         var r = '', i = 0;
         while (i < s.length) {
@@ -259,30 +221,68 @@ function executeQualityScript(scriptContent) {
         return r;
     };
 
-    // Proxy intercepts all variable lookups (mimics vm.createContext)
-    var proxyScope = new Proxy(scope, {
-        has: function(target, key) {
-            if (key === Symbol.unscopables) return false;
-            return true;
-        },
-        get: function(target, key) {
-            if (key === Symbol.unscopables) return undefined;
-            if (key in target) return target[key];
-            return undefined;
-        },
-        set: function(target, key, value) {
-            target[key] = value;
-            return true;
-        },
-    });
+    // All global names the script may reference, passed as function parameters.
+    // Function is set to undefined so anti-debug constructor checks fail safely.
+    var scopeEntries = [
+        ['document', mockDoc],
+        ['navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36' }],
+        ['location', { href: BASE_URL, hostname: 'web376x.faselhdx.best' }],
+        ['console', { log: function(){}, warn: function(){}, error: function(){} }],
+        ['parseInt', parseInt],
+        ['parseFloat', parseFloat],
+        ['isNaN', isNaN],
+        ['isFinite', isFinite],
+        ['String', String],
+        ['Number', Number],
+        ['Array', Array],
+        ['Object', Object],
+        ['Boolean', Boolean],
+        ['RegExp', RegExp],
+        ['Function', undefined],
+        ['Error', Error],
+        ['TypeError', TypeError],
+        ['RangeError', RangeError],
+        ['SyntaxError', SyntaxError],
+        ['encodeURIComponent', encodeURIComponent],
+        ['decodeURIComponent', decodeURIComponent],
+        ['encodeURI', encodeURI],
+        ['decodeURI', decodeURI],
+        ['Math', Math],
+        ['Date', Date],
+        ['JSON', JSON],
+        ['NaN', NaN],
+        ['Infinity', Infinity],
+        ['undefined', undefined],
+        ['setTimeout', function() { return 1; }],
+        ['setInterval', function() { return 1; }],
+        ['clearTimeout', function() {}],
+        ['clearInterval', function() {}],
+        ['$', mock$],
+        ['jQuery', mock$],
+        ['Cookies', { get: function() { return null; }, set: function() {} }],
+        ['atob', polyfillAtob],
+        ['btoa', polyfillBtoa],
+    ];
 
-    scope.window = proxyScope;
-    scope.self = proxyScope;
-    scope.globalThis = proxyScope;
+    // Build a scope object for window/self/globalThis to reference
+    var scopeObj = {};
+    for (var i = 0; i < scopeEntries.length; i++) {
+        scopeObj[scopeEntries[i][0]] = scopeEntries[i][1];
+    }
+    scopeObj.window = scopeObj;
+    scopeObj.self = scopeObj;
+    scopeObj.globalThis = scopeObj;
+
+    scopeEntries.push(['window', scopeObj]);
+    scopeEntries.push(['self', scopeObj]);
+    scopeEntries.push(['globalThis', scopeObj]);
+
+    var paramNames = scopeEntries.map(function(e) { return e[0]; }).join(', ');
+    var paramValues = scopeEntries.map(function(e) { return e[1]; });
 
     try {
-        var executor = new Function('scope', 'with(scope){\n' + scriptContent + '\n}');
-        executor(proxyScope);
+        var executor = new Function(paramNames, scriptContent);
+        executor.apply(null, paramValues);
     } catch (e) {
         // Script execution failed silently
     }
