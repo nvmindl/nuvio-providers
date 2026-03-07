@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-07T12:43:58.298Z
+ * Generated: 2026-03-07T12:50:09.895Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -558,7 +558,9 @@ function resolveDirectFromPlayer(playerUrl, pageUrl) {
 function buildStreams(directStreams) {
   var qualityOrder = { "1080p": 0, "720p": 1, "480p": 2, "360p": 3, "auto": 4 };
   var sorted = directStreams.slice().sort(function(a, b) {
-    return (qualityOrder[a.quality] || 99) - (qualityOrder[b.quality] || 99);
+    var oa = a.quality in qualityOrder ? qualityOrder[a.quality] : 99;
+    var ob = b.quality in qualityOrder ? qualityOrder[b.quality] : 99;
+    return oa - ob;
   });
   var streams = [];
   for (var i = 0; i < sorted.length; i++) {

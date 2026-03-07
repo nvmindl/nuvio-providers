@@ -518,7 +518,9 @@ function buildStreams(directStreams) {
     var qualityOrder = { '1080p': 0, '720p': 1, '480p': 2, '360p': 3, 'auto': 4 };
 
     var sorted = directStreams.slice().sort(function(a, b) {
-        return (qualityOrder[a.quality] || 99) - (qualityOrder[b.quality] || 99);
+        var oa = a.quality in qualityOrder ? qualityOrder[a.quality] : 99;
+        var ob = b.quality in qualityOrder ? qualityOrder[b.quality] : 99;
+        return oa - ob;
     });
 
     var streams = [];
