@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-07T12:31:44.432Z
+ * Generated: 2026-03-07T12:43:58.298Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -124,7 +124,7 @@ function searchCandidates(query) {
       if (!href)
         return;
       if (/^https?:\/\/web\d+x\.faselhdx\.best\//i.test(href)) {
-        if (/\/(movies|series|seasons|episodes|anime-movies|anime-series)\//i.test(href)) {
+        if (/\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\//i.test(href)) {
           urls.push(href);
         }
       }
@@ -138,9 +138,9 @@ function scoreCandidate(url, mediaType, season, episode, title, year) {
   var score = 0;
   if (mediaType === "movie" && /(\/movies\/|\/anime-movies\/)/.test(lower))
     score += 8;
-  if (mediaType === "tv" && /\/episodes\//.test(lower))
+  if (mediaType === "tv" && /\/(episodes|anime-episodes)\//.test(lower))
     score += 10;
-  if (mediaType === "tv" && /\/seasons\//.test(lower))
+  if (mediaType === "tv" && /\/(seasons|anime)\//.test(lower))
     score += 8;
   if (mediaType === "tv" && /(\/series\/|\/anime-series\/)/.test(lower))
     score += 4;
@@ -179,7 +179,7 @@ function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode) {
     var targetDiv = seasonDivs.eq(seasonIdx);
     var onclick = targetDiv.attr("onclick") || "";
     var episodeLinks = [];
-    targetDiv.find('a[href*="/episodes/"]').each(function(_, el) {
+    targetDiv.find('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
       episodeLinks.push($(el).attr("href"));
     });
     if (episodeLinks.length === 0 && onclick) {
@@ -194,13 +194,13 @@ function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode) {
           headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: seasonsPageUrl })
         });
         var $s = cheerio.load(sHtml);
-        $s('a[href*="/episodes/"]').each(function(_, el) {
+        $s('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
           episodeLinks.push($s(el).attr("href"));
         });
       }
     }
     if (episodeLinks.length === 0) {
-      $('a[href*="/episodes/"]').each(function(_, el) {
+      $('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
         episodeLinks.push($(el).attr("href"));
       });
     }
@@ -254,7 +254,7 @@ function resolvePageUrl(tmdbId, mediaType, season, episode) {
       return b.score - a.score;
     });
     var bestUrl = ranked[0] ? ranked[0].url : "";
-    if (mediaType === "tv" && season && episode && bestUrl && /\/seasons\//.test(bestUrl)) {
+    if (mediaType === "tv" && season && episode && bestUrl && /\/(seasons|anime)\//.test(bestUrl)) {
       var episodeUrl = yield resolveEpisodeFromSeasons(bestUrl, season, episode);
       if (episodeUrl)
         return episodeUrl;
@@ -565,10 +565,10 @@ function buildStreams(directStreams) {
     var s = sorted[i];
     var label = s.quality === "auto" ? "Auto" : s.quality;
     streams.push({
-      name: "FaselHDX",
+      name: "FaselHDX - " + label,
       title: label,
       url: s.url,
-      quality: s.quality === "auto" ? "WEB" : s.quality,
+      quality: label,
       headers: s.headers
     });
   }

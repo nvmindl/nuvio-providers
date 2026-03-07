@@ -63,7 +63,7 @@ async function searchCandidates(query) {
         var href = $(el).attr('href');
         if (!href) return;
         if (/^https?:\/\/web\d+x\.faselhdx\.best\//i.test(href)) {
-            if (/\/(movies|series|seasons|episodes|anime-movies|anime-series)\//i.test(href)) {
+            if (/\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\//i.test(href)) {
                 urls.push(href);
             }
         }
@@ -78,8 +78,8 @@ function scoreCandidate(url, mediaType, season, episode, title, year) {
     var score = 0;
 
     if (mediaType === 'movie' && /(\/movies\/|\/anime-movies\/)/.test(lower)) score += 8;
-    if (mediaType === 'tv' && /\/episodes\//.test(lower)) score += 10;
-    if (mediaType === 'tv' && /\/seasons\//.test(lower)) score += 8;
+    if (mediaType === 'tv' && /\/(episodes|anime-episodes)\//.test(lower)) score += 10;
+    if (mediaType === 'tv' && /\/(seasons|anime)\//.test(lower)) score += 8;
     if (mediaType === 'tv' && /(\/series\/|\/anime-series\/)/.test(lower)) score += 4;
     if (year && lower.includes(year)) score += 2;
 
@@ -123,7 +123,7 @@ async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode) {
 
     // Check if this season div already has episode links (active season)
     var episodeLinks = [];
-    targetDiv.find('a[href*="/episodes/"]').each(function(_, el) {
+    targetDiv.find('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
         episodeLinks.push($(el).attr('href'));
     });
 
@@ -141,7 +141,7 @@ async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode) {
                 headers: { ...HEADERS, Referer: seasonsPageUrl },
             });
             var $s = cheerio.load(sHtml);
-            $s('a[href*="/episodes/"]').each(function(_, el) {
+            $s('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
                 episodeLinks.push($s(el).attr('href'));
             });
         }
@@ -149,7 +149,7 @@ async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode) {
 
     // Also check the main page's episode links (for the active season)
     if (episodeLinks.length === 0) {
-        $('a[href*="/episodes/"]').each(function(_, el) {
+        $('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
             episodeLinks.push($(el).attr('href'));
         });
     }
@@ -210,7 +210,7 @@ async function resolvePageUrl(tmdbId, mediaType, season, episode) {
     var bestUrl = ranked[0] ? ranked[0].url : '';
 
     // For TV shows: if we found a /seasons/ page, drill into it
-    if (mediaType === 'tv' && season && episode && bestUrl && /\/seasons\//.test(bestUrl)) {
+    if (mediaType === 'tv' && season && episode && bestUrl && /\/(seasons|anime)\//.test(bestUrl)) {
         var episodeUrl = await resolveEpisodeFromSeasons(bestUrl, season, episode);
         if (episodeUrl) return episodeUrl;
         console.log('[FaselHDX] Could not resolve episode from seasons page, using best URL');
@@ -526,10 +526,10 @@ function buildStreams(directStreams) {
         var s = sorted[i];
         var label = s.quality === 'auto' ? 'Auto' : s.quality;
         streams.push({
-            name: 'FaselHDX',
+            name: 'FaselHDX - ' + label,
             title: label,
             url: s.url,
-            quality: s.quality === 'auto' ? 'WEB' : s.quality,
+            quality: label,
             headers: s.headers,
         });
     }
