@@ -18,6 +18,7 @@ var TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 var TMDB_API_BASE = 'https://api.themoviedb.org/3';
 
 async function resolveTmdbMeta(tmdbId, mediaType) {
+    console.log('[FaselHDX] resolveTmdbMeta: id=' + tmdbId + ' type=' + mediaType);
     var endpoint = mediaType === 'movie' ? 'movie' : 'tv';
     var url = TMDB_API_BASE + '/' + endpoint + '/' + tmdbId + '?api_key=' + TMDB_API_KEY;
 
@@ -38,11 +39,13 @@ async function resolveTmdbMeta(tmdbId, mediaType) {
     var releaseDate = mediaType === 'tv' ? (data.first_air_date || '') : (data.release_date || '');
     var year = releaseDate ? releaseDate.split('-')[0] : '';
     var normalizedTitle = cleanText(title);
+    console.log('[FaselHDX] TMDB resolved: title="' + normalizedTitle + '" year=' + year);
 
     return { title: normalizedTitle, year: year };
 }
 
 async function searchCandidates(query) {
+    console.log('[FaselHDX] searchCandidates: "' + query + '"');
     if (!query) return [];
 
     var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(query);
@@ -66,6 +69,7 @@ async function searchCandidates(query) {
         }
     });
 
+    console.log('[FaselHDX] searchCandidates found ' + urls.length + ' URLs');
     return unique(urls);
 }
 
@@ -118,6 +122,7 @@ async function resolvePageUrl(tmdbId, mediaType, season, episode) {
     }
 
     var candidates = unique(allCandidates);
+    console.log('[FaselHDX] resolvePageUrl: ' + candidates.length + ' unique candidates from ' + allCandidates.length + ' total');
     if (candidates.length === 0) return '';
 
     var ranked = candidates
@@ -278,7 +283,7 @@ function executeQualityScript(scriptContent) {
         var executor = new Function(paramNames, scriptContent);
         executor.apply(null, paramValues);
     } catch (e) {
-        // Script execution failed silently
+        console.error('[FaselHDX] sandbox exec error: ' + e.message);
     }
 
     return captured;
@@ -370,6 +375,7 @@ async function resolveDirectFromPlayer(playerUrl, pageUrl) {
             };
         });
     } catch (e) {
+        console.error('[FaselHDX] resolveDirectFromPlayer error: ' + e.message);
         return [];
     }
 }

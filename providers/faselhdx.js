@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-07T10:29:42.151Z
+ * Generated: 2026-03-07T11:11:56.662Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -51,14 +51,24 @@ var HEADERS = {
 };
 function fetchText(_0) {
   return __async(this, arguments, function* (url, options = {}) {
-    const response = yield fetch(url, __spreadValues({
-      redirect: "follow",
-      headers: __spreadValues(__spreadValues({}, HEADERS), options.headers || {})
-    }, options));
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} for ${url}`);
+    console.log("[FaselHDX] fetch: " + url.substring(0, 120));
+    var response;
+    try {
+      response = yield fetch(url, __spreadValues({
+        redirect: "follow",
+        headers: __spreadValues(__spreadValues({}, HEADERS), options.headers || {})
+      }, options));
+    } catch (fetchErr) {
+      console.error("[FaselHDX] fetch threw: " + fetchErr.message);
+      throw fetchErr;
     }
-    return response.text();
+    console.log("[FaselHDX] fetch status: " + response.status + " for " + url.substring(0, 80));
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status + " for " + url);
+    }
+    var text = yield response.text();
+    console.log("[FaselHDX] fetch got " + text.length + " chars from " + url.substring(0, 80));
+    return text;
   });
 }
 
@@ -74,6 +84,7 @@ var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_API_BASE = "https://api.themoviedb.org/3";
 function resolveTmdbMeta(tmdbId, mediaType) {
   return __async(this, null, function* () {
+    console.log("[FaselHDX] resolveTmdbMeta: id=" + tmdbId + " type=" + mediaType);
     var endpoint = mediaType === "movie" ? "movie" : "tv";
     var url = TMDB_API_BASE + "/" + endpoint + "/" + tmdbId + "?api_key=" + TMDB_API_KEY;
     var response = yield fetch(url, {
@@ -91,11 +102,13 @@ function resolveTmdbMeta(tmdbId, mediaType) {
     var releaseDate = mediaType === "tv" ? data.first_air_date || "" : data.release_date || "";
     var year = releaseDate ? releaseDate.split("-")[0] : "";
     var normalizedTitle = cleanText(title);
+    console.log('[FaselHDX] TMDB resolved: title="' + normalizedTitle + '" year=' + year);
     return { title: normalizedTitle, year };
   });
 }
 function searchCandidates(query) {
   return __async(this, null, function* () {
+    console.log('[FaselHDX] searchCandidates: "' + query + '"');
     if (!query)
       return [];
     var searchUrl = BASE_URL + "/?s=" + encodeURIComponent(query);
@@ -116,6 +129,7 @@ function searchCandidates(query) {
         }
       }
     });
+    console.log("[FaselHDX] searchCandidates found " + urls.length + " URLs");
     return unique(urls);
   });
 }
@@ -171,6 +185,7 @@ function resolvePageUrl(tmdbId, mediaType, season, episode) {
         break;
     }
     var candidates = unique(allCandidates);
+    console.log("[FaselHDX] resolvePageUrl: " + candidates.length + " unique candidates from " + allCandidates.length + " total");
     if (candidates.length === 0)
       return "";
     var ranked = candidates.map(function(url) {
@@ -357,6 +372,7 @@ function executeQualityScript(scriptContent) {
     var executor = new Function(paramNames, scriptContent);
     executor.apply(null, paramValues);
   } catch (e) {
+    console.error("[FaselHDX] sandbox exec error: " + e.message);
   }
   return captured;
 }
@@ -436,6 +452,7 @@ function resolveDirectFromPlayer(playerUrl, pageUrl) {
         };
       });
     } catch (e) {
+      console.error("[FaselHDX] resolveDirectFromPlayer error: " + e.message);
       return [];
     }
   });

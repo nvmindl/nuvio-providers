@@ -7,18 +7,29 @@ export const HEADERS = {
 };
 
 export async function fetchText(url, options = {}) {
-    const response = await fetch(url, {
-        redirect: 'follow',
-        headers: {
-            ...HEADERS,
-            ...(options.headers || {}),
-        },
-        ...options,
-    });
-
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status} for ${url}`);
+    console.log('[FaselHDX] fetch: ' + url.substring(0, 120));
+    var response;
+    try {
+        response = await fetch(url, {
+            redirect: 'follow',
+            headers: {
+                ...HEADERS,
+                ...(options.headers || {}),
+            },
+            ...options,
+        });
+    } catch (fetchErr) {
+        console.error('[FaselHDX] fetch threw: ' + fetchErr.message);
+        throw fetchErr;
     }
 
-    return response.text();
+    console.log('[FaselHDX] fetch status: ' + response.status + ' for ' + url.substring(0, 80));
+
+    if (!response.ok) {
+        throw new Error('HTTP ' + response.status + ' for ' + url);
+    }
+
+    var text = await response.text();
+    console.log('[FaselHDX] fetch got ' + text.length + ' chars from ' + url.substring(0, 80));
+    return text;
 }
