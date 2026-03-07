@@ -1,12 +1,12 @@
 {
   "name": "FaselHDX Repo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "scrapers": [
     {
       "id": "FaselHDX",
       "name": "FaselHDX",
       "description": "Arabic streaming from FaselHDX with multi-quality HLS support",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",
@@ -18,8 +18,8 @@
         "m3u8",
         "mp4"
       ],
-      "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/faselhdx.png",
-      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/faselhdx.png",
+      "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/193119e/Assets/faselhdx.png",
+      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/193119e/Assets/faselhdx.png",
       "contentLanguage": [
         "ar",
         "en"
