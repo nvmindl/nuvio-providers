@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-07T10:20:56.232Z
+ * Generated: 2026-03-07T10:29:42.151Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -65,37 +65,32 @@ function fetchText(_0) {
 // src/faselhdx/extractor.js
 var cheerio = require("cheerio-without-node-native");
 function cleanText(value) {
-  return String(value || "").toLowerCase().replace(/&[^;]+;/g, " ").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
-}
-function decodeSlugFromCanonical(canonicalHref) {
-  if (!canonicalHref)
-    return "";
-  var last = canonicalHref.split("/").filter(Boolean).pop() || "";
-  var slug = last.replace(/^\d+-/, "");
-  return slug.replace(/-/g, " ").trim();
-}
-function parseYearFromTitleTag(titleTag) {
-  var match = String(titleTag || "").match(/\((\d{4})\)/);
-  return match ? match[1] : "";
+  return String(value || "").toLowerCase().replace(/&[^;]+;/g, " ").replace(/[^a-z0-9\s\u0600-\u06FF\u0400-\u04FF\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF]/g, " ").replace(/\s+/g, " ").trim();
 }
 function unique(values) {
   return Array.from(new Set(values.filter(Boolean)));
 }
+var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
+var TMDB_API_BASE = "https://api.themoviedb.org/3";
 function resolveTmdbMeta(tmdbId, mediaType) {
   return __async(this, null, function* () {
-    var kind = mediaType === "movie" ? "movie" : "tv";
-    var tmdbUrl = "https://www.themoviedb.org/" + kind + "/" + tmdbId;
-    var html = yield fetchText(tmdbUrl, {
-      headers: __spreadProps(__spreadValues({}, HEADERS), {
-        Referer: "https://www.themoviedb.org/"
-      })
+    var endpoint = mediaType === "movie" ? "movie" : "tv";
+    var url = TMDB_API_BASE + "/" + endpoint + "/" + tmdbId + "?api_key=" + TMDB_API_KEY;
+    var response = yield fetch(url, {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      }
     });
-    var $ = cheerio.load(html);
-    var titleTag = $("title").first().text() || "";
-    var canonical = $('link[rel="canonical"]').attr("href") || "";
-    var titleFromCanonical = decodeSlugFromCanonical(canonical);
-    var year = parseYearFromTitleTag(titleTag);
-    var normalizedTitle = cleanText(titleFromCanonical || titleTag);
+    if (!response.ok) {
+      throw new Error("TMDB API error: " + response.status);
+    }
+    var data = yield response.json();
+    var title = mediaType === "tv" ? data.name || "" : data.title || "";
+    var releaseDate = mediaType === "tv" ? data.first_air_date || "" : data.release_date || "";
+    var year = releaseDate ? releaseDate.split("-")[0] : "";
+    var normalizedTitle = cleanText(title);
     return { title: normalizedTitle, year };
   });
 }
