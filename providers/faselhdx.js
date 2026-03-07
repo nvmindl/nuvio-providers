@@ -1,15 +1,11 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-07T10:03:59.273Z
+ * Generated: 2026-03-07T10:20:56.232Z
  */
-var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
-var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
-var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __propIsEnum = Object.prototype.propertyIsEnumerable;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
@@ -25,22 +21,6 @@ var __spreadValues = (a, b) => {
   return a;
 };
 var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
     var fulfilled = (value) => {
@@ -61,9 +41,6 @@ var __async = (__this, __arguments, generator) => {
     step((generator = generator.apply(__this, __arguments)).next());
   });
 };
-
-// src/faselhdx/extractor.js
-var import_cheerio_without_node_native = __toESM(require("cheerio-without-node-native"));
 
 // src/faselhdx/http.js
 var BASE_URL = "https://web376x.faselhdx.best";
@@ -86,6 +63,7 @@ function fetchText(_0) {
 }
 
 // src/faselhdx/extractor.js
+var cheerio = require("cheerio-without-node-native");
 function cleanText(value) {
   return String(value || "").toLowerCase().replace(/&[^;]+;/g, " ").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
 }
@@ -112,7 +90,7 @@ function resolveTmdbMeta(tmdbId, mediaType) {
         Referer: "https://www.themoviedb.org/"
       })
     });
-    var $ = import_cheerio_without_node_native.default.load(html);
+    var $ = cheerio.load(html);
     var titleTag = $("title").first().text() || "";
     var canonical = $('link[rel="canonical"]').attr("href") || "";
     var titleFromCanonical = decodeSlugFromCanonical(canonical);
@@ -131,7 +109,7 @@ function searchCandidates(query) {
         Referer: BASE_URL + "/main"
       })
     });
-    var $ = import_cheerio_without_node_native.default.load(html);
+    var $ = cheerio.load(html);
     var urls = [];
     $("a[href]").each(function(_, el) {
       var href = $(el).attr("href");
@@ -500,7 +478,7 @@ function extractStreams(tmdbId, mediaType, season, episode) {
         Referer: BASE_URL + "/main"
       })
     });
-    var $ = import_cheerio_without_node_native.default.load(html);
+    var $ = cheerio.load(html);
     var playerUrls = extractPlayerUrls($);
     console.log("[FaselHDX] Found " + playerUrls.length + " player URLs");
     var allStreams = [];

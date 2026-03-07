@@ -1,4 +1,4 @@
-import cheerio from 'cheerio-without-node-native';
+var cheerio = require('cheerio-without-node-native');
 import { BASE_URL, HEADERS, fetchText } from './http.js';
 
 function cleanText(value) {
