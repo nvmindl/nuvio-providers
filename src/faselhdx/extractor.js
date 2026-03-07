@@ -159,11 +159,43 @@ function extractPlayerUrls($) {
  * Execute the quality_change inline script in a sandboxed scope
  * to extract stream URLs from its document.write() output.
  *
- * Uses Function() with named parameters to shadow all globals —
- * compatible with Hermes (which does not support with()).
+ * Hermes compiles JS to bytecode, so Function.prototype.toString() returns
+ * "[bytecode]" instead of source. The obfuscator's anti-debugging checks
+ * fn.toString() for patterns — when it gets "[bytecode]", it thinks a
+ * debugger is attached and enters an infinite loop.
+ *
+ * Fix: Pre-process the script to neutralize anti-debug patterns before
+ * execution, and cap all while(true) loops with iteration limits.
  */
 function executeQualityScript(scriptContent) {
     var captured = '';
+
+    // --- Hermes fix: neutralize anti-debug code patterns ---
+    // The obfuscator has an anti-debug class that tests fn.toString() against
+    // a regex like /\w+ *\(\) *{\w+ *['|"].+['|"];? *}/. In V8, functions
+    // return source code from toString(), so the test passes. In Hermes,
+    // toString() returns "[bytecode]" which fails the test, triggering
+    // infinite recursive calls (nPFMJC -> mNJyyv -> ajuSPv -> ...).
+    //
+    // Fix: Replace the ['test'](this[...]['toString']()) anti-debug check
+    // with a hardcoded string that matches the expected regex pattern.
+    var antiDebugFixes = 0;
+    scriptContent = scriptContent.replace(
+        /\['test'\]\(this\['[^']+'\]\['toString'\]\(\)\)/g,
+        function() { antiDebugFixes++; return "['test'](\"function (){return'newState';}\")"; }
+    );
+
+    // Also cap while(!![]) loops as a safety net
+    var loopCounter = 0;
+    scriptContent = scriptContent.replace(/while\s*\(\s*!!\s*\[\s*\]\s*\)\s*\{/g, function() {
+        loopCounter++;
+        return 'var __lc' + loopCounter + '=0;while(++__lc' + loopCounter + '<5000){';
+    });
+
+    // Replace debugger statements
+    scriptContent = scriptContent.replace(/\bdebugger\b/g, 'void 0');
+
+    console.log('[FaselHDX] sandbox: patched ' + antiDebugFixes + ' anti-debug checks, ' + loopCounter + ' while-loops');
 
     var mockDoc = {
         write: function(s) { captured += s; },
@@ -220,8 +252,6 @@ function executeQualityScript(scriptContent) {
         return r;
     };
 
-    // All global names the script may reference, passed as function parameters.
-    // Function is set to undefined so anti-debug constructor checks fail safely.
     var scopeEntries = [
         ['document', mockDoc],
         ['navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36' }],
@@ -280,10 +310,14 @@ function executeQualityScript(scriptContent) {
     var paramValues = scopeEntries.map(function(e) { return e[1]; });
 
     try {
+        console.log('[FaselHDX] sandbox: creating Function with ' + scopeEntries.length + ' params, script len=' + scriptContent.length);
         var executor = new Function(paramNames, scriptContent);
+        console.log('[FaselHDX] sandbox: Function created OK, executing...');
         executor.apply(null, paramValues);
+        console.log('[FaselHDX] sandbox: execution done, captured ' + captured.length + ' chars');
     } catch (e) {
-        console.error('[FaselHDX] sandbox exec error: ' + e.message);
+        console.error('[FaselHDX] sandbox exec error: ' + (e && e.message ? e.message : String(e)));
+        console.error('[FaselHDX] sandbox exec stack: ' + (e && e.stack ? e.stack.substring(0, 200) : 'none'));
     }
 
     return captured;
@@ -293,16 +327,30 @@ function executeQualityScript(scriptContent) {
  * Extract stream URLs from the quality_change div's inline script.
  */
 function extractQualityScriptUrls(playerHtml) {
+    console.log('[FaselHDX] extractQualityScriptUrls: html len=' + playerHtml.length);
     var qcMatch = playerHtml.match(/<div\s+class="quality_change">([\s\S]*?)<\/div>/i);
-    if (!qcMatch) return [];
+    if (!qcMatch) {
+        console.log('[FaselHDX] extractQualityScriptUrls: no quality_change div found');
+        return [];
+    }
+    console.log('[FaselHDX] extractQualityScriptUrls: quality_change div len=' + qcMatch[1].length);
 
     var scriptMatch = qcMatch[1].match(/<script[^>]*>([\s\S]+?)<\/script>/i);
-    if (!scriptMatch) return [];
+    if (!scriptMatch) {
+        console.log('[FaselHDX] extractQualityScriptUrls: no script tag in quality_change');
+        return [];
+    }
 
     var scriptContent = scriptMatch[1].trim();
-    if (scriptContent.length < 500) return [];
+    console.log('[FaselHDX] extractQualityScriptUrls: script len=' + scriptContent.length);
+    if (scriptContent.length < 500) {
+        console.log('[FaselHDX] extractQualityScriptUrls: script too short, skipping');
+        return [];
+    }
 
+    console.log('[FaselHDX] extractQualityScriptUrls: about to execute sandbox...');
     var htmlOutput = executeQualityScript(scriptContent);
+    console.log('[FaselHDX] extractQualityScriptUrls: sandbox returned ' + (htmlOutput ? htmlOutput.length : 0) + ' chars');
     if (!htmlOutput) return [];
 
     var urls = [];
@@ -311,6 +359,7 @@ function extractQualityScriptUrls(playerHtml) {
     while ((m = re.exec(htmlOutput)) !== null) {
         if (m[1] && /^https?:\/\//i.test(m[1])) urls.push(m[1]);
     }
+    console.log('[FaselHDX] extractQualityScriptUrls: found ' + urls.length + ' data-url entries');
 
     return urls;
 }

@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-07T11:11:56.662Z
+ * Generated: 2026-03-07T12:12:27.253Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -216,6 +216,21 @@ function extractPlayerUrls($) {
 }
 function executeQualityScript(scriptContent) {
   var captured = "";
+  var antiDebugFixes = 0;
+  scriptContent = scriptContent.replace(
+    /\['test'\]\(this\['[^']+'\]\['toString'\]\(\)\)/g,
+    function() {
+      antiDebugFixes++;
+      return `['test']("function (){return'newState';}")`;
+    }
+  );
+  var loopCounter = 0;
+  scriptContent = scriptContent.replace(/while\s*\(\s*!!\s*\[\s*\]\s*\)\s*\{/g, function() {
+    loopCounter++;
+    return "var __lc" + loopCounter + "=0;while(++__lc" + loopCounter + "<5000){";
+  });
+  scriptContent = scriptContent.replace(/\bdebugger\b/g, "void 0");
+  console.log("[FaselHDX] sandbox: patched " + antiDebugFixes + " anti-debug checks, " + loopCounter + " while-loops");
   var mockDoc = {
     write: function(s) {
       captured += s;
@@ -369,24 +384,39 @@ function executeQualityScript(scriptContent) {
     return e[1];
   });
   try {
+    console.log("[FaselHDX] sandbox: creating Function with " + scopeEntries.length + " params, script len=" + scriptContent.length);
     var executor = new Function(paramNames, scriptContent);
+    console.log("[FaselHDX] sandbox: Function created OK, executing...");
     executor.apply(null, paramValues);
+    console.log("[FaselHDX] sandbox: execution done, captured " + captured.length + " chars");
   } catch (e) {
-    console.error("[FaselHDX] sandbox exec error: " + e.message);
+    console.error("[FaselHDX] sandbox exec error: " + (e && e.message ? e.message : String(e)));
+    console.error("[FaselHDX] sandbox exec stack: " + (e && e.stack ? e.stack.substring(0, 200) : "none"));
   }
   return captured;
 }
 function extractQualityScriptUrls(playerHtml) {
+  console.log("[FaselHDX] extractQualityScriptUrls: html len=" + playerHtml.length);
   var qcMatch = playerHtml.match(/<div\s+class="quality_change">([\s\S]*?)<\/div>/i);
-  if (!qcMatch)
+  if (!qcMatch) {
+    console.log("[FaselHDX] extractQualityScriptUrls: no quality_change div found");
     return [];
+  }
+  console.log("[FaselHDX] extractQualityScriptUrls: quality_change div len=" + qcMatch[1].length);
   var scriptMatch = qcMatch[1].match(/<script[^>]*>([\s\S]+?)<\/script>/i);
-  if (!scriptMatch)
+  if (!scriptMatch) {
+    console.log("[FaselHDX] extractQualityScriptUrls: no script tag in quality_change");
     return [];
+  }
   var scriptContent = scriptMatch[1].trim();
-  if (scriptContent.length < 500)
+  console.log("[FaselHDX] extractQualityScriptUrls: script len=" + scriptContent.length);
+  if (scriptContent.length < 500) {
+    console.log("[FaselHDX] extractQualityScriptUrls: script too short, skipping");
     return [];
+  }
+  console.log("[FaselHDX] extractQualityScriptUrls: about to execute sandbox...");
   var htmlOutput = executeQualityScript(scriptContent);
+  console.log("[FaselHDX] extractQualityScriptUrls: sandbox returned " + (htmlOutput ? htmlOutput.length : 0) + " chars");
   if (!htmlOutput)
     return [];
   var urls = [];
@@ -396,6 +426,7 @@ function extractQualityScriptUrls(playerHtml) {
     if (m[1] && /^https?:\/\//i.test(m[1]))
       urls.push(m[1]);
   }
+  console.log("[FaselHDX] extractQualityScriptUrls: found " + urls.length + " data-url entries");
   return urls;
 }
 function extractLiteralUrls(playerHtml) {
