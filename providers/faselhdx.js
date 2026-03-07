@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-07T12:12:27.253Z
+ * Generated: 2026-03-07T12:31:44.432Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -124,7 +124,7 @@ function searchCandidates(query) {
       if (!href)
         return;
       if (/^https?:\/\/web\d+x\.faselhdx\.best\//i.test(href)) {
-        if (/\/(movies|series|episodes|anime-movies|anime-series)\//i.test(href)) {
+        if (/\/(movies|series|seasons|episodes|anime-movies|anime-series)\//i.test(href)) {
           urls.push(href);
         }
       }
@@ -140,6 +140,8 @@ function scoreCandidate(url, mediaType, season, episode, title, year) {
     score += 8;
   if (mediaType === "tv" && /\/episodes\//.test(lower))
     score += 10;
+  if (mediaType === "tv" && /\/seasons\//.test(lower))
+    score += 8;
   if (mediaType === "tv" && /(\/series\/|\/anime-series\/)/.test(lower))
     score += 4;
   if (year && lower.includes(year))
@@ -162,6 +164,68 @@ function scoreCandidate(url, mediaType, season, episode, title, year) {
   }
   return score;
 }
+function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode) {
+  return __async(this, null, function* () {
+    console.log("[FaselHDX] resolveEpisodeFromSeasons: s=" + season + " e=" + episode);
+    var html = yield fetchText(seasonsPageUrl, {
+      headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: BASE_URL + "/main" })
+    });
+    var $ = cheerio.load(html);
+    var seasonDivs = $(".seasonDiv");
+    console.log("[FaselHDX] Found " + seasonDivs.length + " season divs");
+    if (seasonDivs.length === 0)
+      return "";
+    var seasonIdx = Math.max(0, Math.min(parseInt(season, 10) - 1, seasonDivs.length - 1));
+    var targetDiv = seasonDivs.eq(seasonIdx);
+    var onclick = targetDiv.attr("onclick") || "";
+    var episodeLinks = [];
+    targetDiv.find('a[href*="/episodes/"]').each(function(_, el) {
+      episodeLinks.push($(el).attr("href"));
+    });
+    if (episodeLinks.length === 0 && onclick) {
+      var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
+      if (pMatch && pMatch[1]) {
+        var seasonUrl = pMatch[1];
+        if (!/^https?:\/\//i.test(seasonUrl)) {
+          seasonUrl = BASE_URL + seasonUrl;
+        }
+        console.log("[FaselHDX] Navigating to season page: " + seasonUrl);
+        var sHtml = yield fetchText(seasonUrl, {
+          headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: seasonsPageUrl })
+        });
+        var $s = cheerio.load(sHtml);
+        $s('a[href*="/episodes/"]').each(function(_, el) {
+          episodeLinks.push($s(el).attr("href"));
+        });
+      }
+    }
+    if (episodeLinks.length === 0) {
+      $('a[href*="/episodes/"]').each(function(_, el) {
+        episodeLinks.push($(el).attr("href"));
+      });
+    }
+    episodeLinks = unique(episodeLinks);
+    console.log("[FaselHDX] Found " + episodeLinks.length + " episode links for season " + season);
+    if (episodeLinks.length === 0)
+      return "";
+    var epNum = parseInt(episode, 10);
+    var match = "";
+    for (var i = 0; i < episodeLinks.length; i++) {
+      var decoded = decodeURIComponent(episodeLinks[i]);
+      var numMatch = decoded.match(/-(\d+)(?:-[^/]*)?\/?$/);
+      if (numMatch && parseInt(numMatch[1], 10) === epNum) {
+        match = episodeLinks[i];
+        break;
+      }
+    }
+    if (!match && epNum >= 1 && epNum <= episodeLinks.length) {
+      match = episodeLinks[epNum - 1];
+    }
+    if (match)
+      console.log("[FaselHDX] Matched episode: " + match.substring(0, 100));
+    return match;
+  });
+}
 function resolvePageUrl(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     if (typeof tmdbId === "string" && /^https?:\/\//i.test(tmdbId))
@@ -172,10 +236,6 @@ function resolvePageUrl(tmdbId, mediaType, season, episode) {
       queries.push(tmdbMeta.title + " " + tmdbMeta.year);
     if (tmdbMeta.title)
       queries.push(tmdbMeta.title);
-    if (mediaType === "tv" && tmdbMeta.title && season && episode) {
-      queries.unshift(tmdbMeta.title + " season " + season + " episode " + episode);
-      queries.unshift(tmdbMeta.title + " \u0627\u0644\u0645\u0648\u0633\u0645 " + season + " \u0627\u0644\u062D\u0644\u0642\u0629 " + episode);
-    }
     var allCandidates = [];
     var uq = unique(queries);
     for (var i = 0; i < uq.length; i++) {
@@ -193,7 +253,14 @@ function resolvePageUrl(tmdbId, mediaType, season, episode) {
     }).sort(function(a, b) {
       return b.score - a.score;
     });
-    return ranked[0] ? ranked[0].url : "";
+    var bestUrl = ranked[0] ? ranked[0].url : "";
+    if (mediaType === "tv" && season && episode && bestUrl && /\/seasons\//.test(bestUrl)) {
+      var episodeUrl = yield resolveEpisodeFromSeasons(bestUrl, season, episode);
+      if (episodeUrl)
+        return episodeUrl;
+      console.log("[FaselHDX] Could not resolve episode from seasons page, using best URL");
+    }
+    return bestUrl;
   });
 }
 function extractPlayerUrls($) {

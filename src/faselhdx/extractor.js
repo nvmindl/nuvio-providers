@@ -63,7 +63,7 @@ async function searchCandidates(query) {
         var href = $(el).attr('href');
         if (!href) return;
         if (/^https?:\/\/web\d+x\.faselhdx\.best\//i.test(href)) {
-            if (/\/(movies|series|episodes|anime-movies|anime-series)\//i.test(href)) {
+            if (/\/(movies|series|seasons|episodes|anime-movies|anime-series)\//i.test(href)) {
                 urls.push(href);
             }
         }
@@ -79,6 +79,7 @@ function scoreCandidate(url, mediaType, season, episode, title, year) {
 
     if (mediaType === 'movie' && /(\/movies\/|\/anime-movies\/)/.test(lower)) score += 8;
     if (mediaType === 'tv' && /\/episodes\//.test(lower)) score += 10;
+    if (mediaType === 'tv' && /\/seasons\//.test(lower)) score += 8;
     if (mediaType === 'tv' && /(\/series\/|\/anime-series\/)/.test(lower)) score += 4;
     if (year && lower.includes(year)) score += 2;
 
@@ -99,6 +100,86 @@ function scoreCandidate(url, mediaType, season, episode, title, year) {
     return score;
 }
 
+/**
+ * For TV shows on FaselHDX, the navigation is:
+ *   search -> /seasons/show-all-seasons -> seasonDiv onclick /?p=XXX -> /episodes/...
+ * We need to drill from the seasons page to the correct episode page.
+ */
+async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode) {
+    console.log('[FaselHDX] resolveEpisodeFromSeasons: s=' + season + ' e=' + episode);
+    var html = await fetchText(seasonsPageUrl, {
+        headers: { ...HEADERS, Referer: BASE_URL + '/main' },
+    });
+    var $ = cheerio.load(html);
+
+    // seasonDiv elements correspond to seasons (1-indexed)
+    var seasonDivs = $('.seasonDiv');
+    console.log('[FaselHDX] Found ' + seasonDivs.length + ' season divs');
+    if (seasonDivs.length === 0) return '';
+
+    var seasonIdx = Math.max(0, Math.min(parseInt(season, 10) - 1, seasonDivs.length - 1));
+    var targetDiv = seasonDivs.eq(seasonIdx);
+    var onclick = targetDiv.attr('onclick') || '';
+
+    // Check if this season div already has episode links (active season)
+    var episodeLinks = [];
+    targetDiv.find('a[href*="/episodes/"]').each(function(_, el) {
+        episodeLinks.push($(el).attr('href'));
+    });
+
+    // If no episode links in this div, it's not the active season
+    // Navigate to the season page via the onclick /?p=XXX URL
+    if (episodeLinks.length === 0 && onclick) {
+        var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
+        if (pMatch && pMatch[1]) {
+            var seasonUrl = pMatch[1];
+            if (!/^https?:\/\//i.test(seasonUrl)) {
+                seasonUrl = BASE_URL + seasonUrl;
+            }
+            console.log('[FaselHDX] Navigating to season page: ' + seasonUrl);
+            var sHtml = await fetchText(seasonUrl, {
+                headers: { ...HEADERS, Referer: seasonsPageUrl },
+            });
+            var $s = cheerio.load(sHtml);
+            $s('a[href*="/episodes/"]').each(function(_, el) {
+                episodeLinks.push($s(el).attr('href'));
+            });
+        }
+    }
+
+    // Also check the main page's episode links (for the active season)
+    if (episodeLinks.length === 0) {
+        $('a[href*="/episodes/"]').each(function(_, el) {
+            episodeLinks.push($(el).attr('href'));
+        });
+    }
+
+    episodeLinks = unique(episodeLinks);
+    console.log('[FaselHDX] Found ' + episodeLinks.length + ' episode links for season ' + season);
+    if (episodeLinks.length === 0) return '';
+
+    // Find the episode by its trailing number
+    var epNum = parseInt(episode, 10);
+    var match = '';
+    for (var i = 0; i < episodeLinks.length; i++) {
+        var decoded = decodeURIComponent(episodeLinks[i]);
+        // Match URLs ending with -N or -N-الأخير etc
+        var numMatch = decoded.match(/-(\d+)(?:-[^/]*)?\/?$/);
+        if (numMatch && parseInt(numMatch[1], 10) === epNum) {
+            match = episodeLinks[i];
+            break;
+        }
+    }
+
+    // Fallback: if episode number matches array index
+    if (!match && epNum >= 1 && epNum <= episodeLinks.length) {
+        match = episodeLinks[epNum - 1];
+    }
+
+    if (match) console.log('[FaselHDX] Matched episode: ' + match.substring(0, 100));
+    return match;
+}
+
 async function resolvePageUrl(tmdbId, mediaType, season, episode) {
     if (typeof tmdbId === 'string' && /^https?:\/\//i.test(tmdbId)) return tmdbId;
 
@@ -107,11 +188,6 @@ async function resolvePageUrl(tmdbId, mediaType, season, episode) {
     var queries = [];
     if (tmdbMeta.title && tmdbMeta.year) queries.push(tmdbMeta.title + ' ' + tmdbMeta.year);
     if (tmdbMeta.title) queries.push(tmdbMeta.title);
-
-    if (mediaType === 'tv' && tmdbMeta.title && season && episode) {
-        queries.unshift(tmdbMeta.title + ' season ' + season + ' episode ' + episode);
-        queries.unshift(tmdbMeta.title + ' الموسم ' + season + ' الحلقة ' + episode);
-    }
 
     var allCandidates = [];
     var uq = unique(queries);
@@ -131,7 +207,16 @@ async function resolvePageUrl(tmdbId, mediaType, season, episode) {
         })
         .sort(function(a, b) { return b.score - a.score; });
 
-    return ranked[0] ? ranked[0].url : '';
+    var bestUrl = ranked[0] ? ranked[0].url : '';
+
+    // For TV shows: if we found a /seasons/ page, drill into it
+    if (mediaType === 'tv' && season && episode && bestUrl && /\/seasons\//.test(bestUrl)) {
+        var episodeUrl = await resolveEpisodeFromSeasons(bestUrl, season, episode);
+        if (episodeUrl) return episodeUrl;
+        console.log('[FaselHDX] Could not resolve episode from seasons page, using best URL');
+    }
+
+    return bestUrl;
 }
 
 function extractPlayerUrls($) {
