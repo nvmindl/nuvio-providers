@@ -1,5 +1,5 @@
 var cheerio = require('cheerio-without-node-native');
-import { BASE_URL, HEADERS, fetchText } from './http.js';
+import { HEADERS, fetchText, resolveBaseUrl } from './http.js';
 
 function cleanText(value) {
     return String(value || '')
@@ -18,125 +18,86 @@ var TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 var TMDB_API_BASE = 'https://api.themoviedb.org/3';
 
 async function resolveTmdbMeta(tmdbId, mediaType) {
-    console.log('[FaselHDX] resolveTmdbMeta: id=' + tmdbId + ' type=' + mediaType);
     var endpoint = mediaType === 'movie' ? 'movie' : 'tv';
     var url = TMDB_API_BASE + '/' + endpoint + '/' + tmdbId + '?api_key=' + TMDB_API_KEY;
-
     var response = await fetch(url, {
         method: 'GET',
-        headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
+        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
     });
-
-    if (!response.ok) {
-        throw new Error('TMDB API error: ' + response.status);
-    }
-
+    if (!response.ok) throw new Error('TMDB ' + response.status);
     var data = await response.json();
     var title = mediaType === 'tv' ? (data.name || '') : (data.title || '');
     var releaseDate = mediaType === 'tv' ? (data.first_air_date || '') : (data.release_date || '');
     var year = releaseDate ? releaseDate.split('-')[0] : '';
-    var normalizedTitle = cleanText(title);
-    console.log('[FaselHDX] TMDB resolved: title="' + normalizedTitle + '" year=' + year);
-
-    return { title: normalizedTitle, year: year };
+    return { title: cleanText(title), year: year };
 }
 
-async function searchCandidates(query) {
-    console.log('[FaselHDX] searchCandidates: "' + query + '"');
-    if (!query) return [];
-
-    var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(query);
-    var html = await fetchText(searchUrl, {
-        headers: {
-            ...HEADERS,
-            Referer: BASE_URL + '/main',
-        },
-    });
-
-    var $ = cheerio.load(html);
+// Extract content URLs from search HTML using regex (much faster than cheerio on 120KB pages)
+function extractSearchUrls(html) {
     var urls = [];
-
-    $('a[href]').each(function(_, el) {
-        var href = $(el).attr('href');
-        if (!href) return;
-        if (/^https?:\/\/web\d+x\.faselhdx\.best\//i.test(href)) {
-            if (/\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\//i.test(href)) {
-                urls.push(href);
-            }
-        }
-    });
-
-    console.log('[FaselHDX] searchCandidates found ' + urls.length + ' URLs');
+    var re = /href="(https?:\/\/web\d+x\.faselhdx\.best\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\/[^"]+)"/gi;
+    var m;
+    while ((m = re.exec(html)) !== null) {
+        if (m[1]) urls.push(m[1]);
+    }
     return unique(urls);
+}
+
+async function searchCandidates(query, baseUrl) {
+    if (!query) return [];
+    var html = await fetchText(baseUrl + '/?s=' + encodeURIComponent(query), {
+        headers: { ...HEADERS, Referer: baseUrl + '/main' },
+    });
+    return extractSearchUrls(html);
 }
 
 function scoreCandidate(url, mediaType, season, episode, title, year) {
     var lower = url.toLowerCase();
     var score = 0;
-
     if (mediaType === 'movie' && /(\/movies\/|\/anime-movies\/)/.test(lower)) score += 8;
     if (mediaType === 'tv' && /\/(episodes|anime-episodes)\//.test(lower)) score += 10;
     if (mediaType === 'tv' && /\/(seasons|anime)\//.test(lower)) score += 8;
     if (mediaType === 'tv' && /(\/series\/|\/anime-series\/)/.test(lower)) score += 4;
     if (year && lower.includes(year)) score += 2;
-
     var normalizedUrl = cleanText(decodeURIComponent(lower));
     var titleWords = unique(title.split(' ').filter(function(w) { return w.length > 2; }));
-
     var wordHits = 0;
     for (var i = 0; i < titleWords.length; i++) {
         if (normalizedUrl.includes(titleWords[i])) wordHits += 1;
     }
     score += Math.min(wordHits, 5);
-
     if (mediaType === 'tv') {
         if (season && new RegExp('(?:season|الموسم)\\s*' + season, 'i').test(normalizedUrl)) score += 3;
         if (episode && new RegExp('(?:episode|الحلقة)\\s*' + episode, 'i').test(normalizedUrl)) score += 4;
     }
-
     return score;
 }
 
-/**
- * For TV shows on FaselHDX, the navigation is:
- *   search -> /seasons/show-all-seasons -> seasonDiv onclick /?p=XXX -> /episodes/...
- * We need to drill from the seasons page to the correct episode page.
- */
-async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode) {
-    console.log('[FaselHDX] resolveEpisodeFromSeasons: s=' + season + ' e=' + episode);
+async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl) {
     var html = await fetchText(seasonsPageUrl, {
-        headers: { ...HEADERS, Referer: BASE_URL + '/main' },
+        headers: { ...HEADERS, Referer: baseUrl + '/main' },
     });
     var $ = cheerio.load(html);
 
-    // seasonDiv elements correspond to seasons (1-indexed)
     var seasonDivs = $('.seasonDiv');
-    console.log('[FaselHDX] Found ' + seasonDivs.length + ' season divs');
     if (seasonDivs.length === 0) return '';
 
     var seasonIdx = Math.max(0, Math.min(parseInt(season, 10) - 1, seasonDivs.length - 1));
     var targetDiv = seasonDivs.eq(seasonIdx);
     var onclick = targetDiv.attr('onclick') || '';
 
-    // Check if this season div already has episode links (active season)
     var episodeLinks = [];
     targetDiv.find('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
         episodeLinks.push($(el).attr('href'));
     });
 
-    // If no episode links in this div, it's not the active season
-    // Navigate to the season page via the onclick /?p=XXX URL
     if (episodeLinks.length === 0 && onclick) {
         var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
         if (pMatch && pMatch[1]) {
             var seasonUrl = pMatch[1];
             if (!/^https?:\/\//i.test(seasonUrl)) {
-                seasonUrl = BASE_URL + seasonUrl;
+                seasonUrl = baseUrl + seasonUrl;
             }
-            console.log('[FaselHDX] Navigating to season page: ' + seasonUrl);
             var sHtml = await fetchText(seasonUrl, {
                 headers: { ...HEADERS, Referer: seasonsPageUrl },
             });
@@ -147,7 +108,6 @@ async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode) {
         }
     }
 
-    // Also check the main page's episode links (for the active season)
     if (episodeLinks.length === 0) {
         $('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
             episodeLinks.push($(el).attr('href'));
@@ -155,50 +115,36 @@ async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode) {
     }
 
     episodeLinks = unique(episodeLinks);
-    console.log('[FaselHDX] Found ' + episodeLinks.length + ' episode links for season ' + season);
     if (episodeLinks.length === 0) return '';
 
-    // Find the episode by its trailing number
     var epNum = parseInt(episode, 10);
     var match = '';
     for (var i = 0; i < episodeLinks.length; i++) {
         var decoded = decodeURIComponent(episodeLinks[i]);
-        // Match URLs ending with -N or -N-الأخير etc
         var numMatch = decoded.match(/-(\d+)(?:-[^/]*)?\/?$/);
         if (numMatch && parseInt(numMatch[1], 10) === epNum) {
             match = episodeLinks[i];
             break;
         }
     }
-
-    // Fallback: if episode number matches array index
     if (!match && epNum >= 1 && epNum <= episodeLinks.length) {
         match = episodeLinks[epNum - 1];
     }
-
-    if (match) console.log('[FaselHDX] Matched episode: ' + match.substring(0, 100));
     return match;
 }
 
-async function resolvePageUrl(tmdbId, mediaType, season, episode) {
+async function resolvePageUrl(tmdbId, mediaType, season, episode, baseUrl) {
     if (typeof tmdbId === 'string' && /^https?:\/\//i.test(tmdbId)) return tmdbId;
 
     var tmdbMeta = await resolveTmdbMeta(tmdbId, mediaType);
 
-    var queries = [];
-    if (tmdbMeta.title && tmdbMeta.year) queries.push(tmdbMeta.title + ' ' + tmdbMeta.year);
-    if (tmdbMeta.title) queries.push(tmdbMeta.title);
-
-    var allCandidates = [];
-    var uq = unique(queries);
-    for (var i = 0; i < uq.length; i++) {
-        var urls = await searchCandidates(uq[i]);
-        allCandidates.push.apply(allCandidates, urls);
-        if (allCandidates.length >= 6) break;
+    // Search title only first (faster); fall back to title+year if no results
+    var candidates = await searchCandidates(tmdbMeta.title, baseUrl);
+    if (candidates.length === 0 && tmdbMeta.year) {
+        candidates = await searchCandidates(tmdbMeta.title + ' ' + tmdbMeta.year, baseUrl);
     }
 
-    var candidates = unique(allCandidates);
-    console.log('[FaselHDX] resolvePageUrl: ' + candidates.length + ' unique candidates from ' + allCandidates.length + ' total');
+    candidates = unique(candidates);
     if (candidates.length === 0) return '';
 
     var ranked = candidates
@@ -209,11 +155,9 @@ async function resolvePageUrl(tmdbId, mediaType, season, episode) {
 
     var bestUrl = ranked[0] ? ranked[0].url : '';
 
-    // For TV shows: if we found a /seasons/ page, drill into it
     if (mediaType === 'tv' && season && episode && bestUrl && /\/(seasons|anime)\//.test(bestUrl)) {
-        var episodeUrl = await resolveEpisodeFromSeasons(bestUrl, season, episode);
+        var episodeUrl = await resolveEpisodeFromSeasons(bestUrl, season, episode, baseUrl);
         if (episodeUrl) return episodeUrl;
-        console.log('[FaselHDX] Could not resolve episode from seasons page, using best URL');
     }
 
     return bestUrl;
@@ -221,66 +165,36 @@ async function resolvePageUrl(tmdbId, mediaType, season, episode) {
 
 function extractPlayerUrls($) {
     var urls = [];
-
     $('ul.tabs-ul li').each(function(_, li) {
         var onclick = $(li).attr('onclick') || '';
         var match = onclick.match(/'(https?:\/\/[^']+\/video_player\?player_token=[^']+)'/i);
         if (match && match[1]) urls.push(match[1]);
     });
-
     var iframeUrl = $('iframe[name="player_iframe"]').attr('data-src')
         || $('iframe[name="player_iframe"]').attr('src');
     if (iframeUrl && /video_player\?player_token=/i.test(iframeUrl)) urls.push(iframeUrl);
-
     $('iframe[data-src*="video_player"]').each(function(_, el) {
         var ds = $(el).attr('data-src');
         if (ds) urls.push(ds);
     });
-
     return unique(urls);
 }
 
-/**
- * Execute the quality_change inline script in a sandboxed scope
- * to extract stream URLs from its document.write() output.
- *
- * Hermes compiles JS to bytecode, so Function.prototype.toString() returns
- * "[bytecode]" instead of source. The obfuscator's anti-debugging checks
- * fn.toString() for patterns — when it gets "[bytecode]", it thinks a
- * debugger is attached and enters an infinite loop.
- *
- * Fix: Pre-process the script to neutralize anti-debug patterns before
- * execution, and cap all while(true) loops with iteration limits.
- */
-function executeQualityScript(scriptContent) {
+function executeQualityScript(scriptContent, baseUrl) {
     var captured = '';
 
-    // --- Hermes fix: neutralize anti-debug code patterns ---
-    // The obfuscator has an anti-debug class that tests fn.toString() against
-    // a regex like /\w+ *\(\) *{\w+ *['|"].+['|"];? *}/. In V8, functions
-    // return source code from toString(), so the test passes. In Hermes,
-    // toString() returns "[bytecode]" which fails the test, triggering
-    // infinite recursive calls (nPFMJC -> mNJyyv -> ajuSPv -> ...).
-    //
-    // Fix: Replace the ['test'](this[...]['toString']()) anti-debug check
-    // with a hardcoded string that matches the expected regex pattern.
-    var antiDebugFixes = 0;
+    // Hermes fix: neutralize anti-debug toString() checks
     scriptContent = scriptContent.replace(
         /\['test'\]\(this\['[^']+'\]\['toString'\]\(\)\)/g,
-        function() { antiDebugFixes++; return "['test'](\"function (){return'newState';}\")"; }
+        "['test'](\"function (){return'newState';}\")"
     );
-
-    // Also cap while(!![]) loops as a safety net
-    var loopCounter = 0;
+    // Cap while(!![]) loops (1000 iterations is plenty)
+    var lc = 0;
     scriptContent = scriptContent.replace(/while\s*\(\s*!!\s*\[\s*\]\s*\)\s*\{/g, function() {
-        loopCounter++;
-        return 'var __lc' + loopCounter + '=0;while(++__lc' + loopCounter + '<5000){';
+        lc++;
+        return 'var __lc' + lc + '=0;while(++__lc' + lc + '<1000){';
     });
-
-    // Replace debugger statements
     scriptContent = scriptContent.replace(/\bdebugger\b/g, 'void 0');
-
-    console.log('[FaselHDX] sandbox: patched ' + antiDebugFixes + ' anti-debug checks, ' + loopCounter + ' while-loops');
 
     var mockDoc = {
         write: function(s) { captured += s; },
@@ -290,24 +204,17 @@ function executeQualityScript(scriptContent) {
         getElementById: function() { return null; },
     };
 
-    // jQuery/Cookies stubs
     var mock$ = function() {
         var r = {};
-        r.on = function() { return r; };
-        r.html = function() { return r; };
-        r.addClass = function() { return r; };
-        r.removeClass = function() { return r; };
-        r.attr = function() { return null; };
-        r.fadeIn = function() { return r; };
-        r.fadeOut = function() { return r; };
-        r.click = function() { return r; };
-        r.find = function() { return r; };
-        r.each = function() { return r; };
+        r.on = function() { return r; }; r.html = function() { return r; };
+        r.addClass = function() { return r; }; r.removeClass = function() { return r; };
+        r.attr = function() { return null; }; r.fadeIn = function() { return r; };
+        r.fadeOut = function() { return r; }; r.click = function() { return r; };
+        r.find = function() { return r; }; r.each = function() { return r; };
         r.text = function() { return ''; };
         return r;
     };
 
-    // atob polyfill (standard base64)
     var polyfillAtob = function(s) {
         var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
         var o = '', i = 0;
@@ -329,113 +236,65 @@ function executeQualityScript(scriptContent) {
             var a = s.charCodeAt(i++);
             var b = i < s.length ? s.charCodeAt(i++) : NaN;
             var c = i < s.length ? s.charCodeAt(i++) : NaN;
-            r += chars[a >> 2];
-            r += chars[((a & 3) << 4) | (b >> 4)];
+            r += chars[a >> 2]; r += chars[((a & 3) << 4) | (b >> 4)];
             r += isNaN(b) ? '=' : chars[((b & 15) << 2) | (c >> 6)];
             r += isNaN(c) ? '=' : chars[c & 63];
         }
         return r;
     };
 
+    var hostname = 'web380x.faselhdx.best';
+    try { hostname = baseUrl.replace(/^https?:\/\//, ''); } catch(e) {}
+
     var scopeEntries = [
         ['document', mockDoc],
         ['navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36' }],
-        ['location', { href: BASE_URL, hostname: 'web376x.faselhdx.best' }],
+        ['location', { href: baseUrl, hostname: hostname }],
         ['console', { log: function(){}, warn: function(){}, error: function(){} }],
-        ['parseInt', parseInt],
-        ['parseFloat', parseFloat],
-        ['isNaN', isNaN],
-        ['isFinite', isFinite],
-        ['String', String],
-        ['Number', Number],
-        ['Array', Array],
-        ['Object', Object],
-        ['Boolean', Boolean],
-        ['RegExp', RegExp],
+        ['parseInt', parseInt], ['parseFloat', parseFloat],
+        ['isNaN', isNaN], ['isFinite', isFinite],
+        ['String', String], ['Number', Number], ['Array', Array],
+        ['Object', Object], ['Boolean', Boolean], ['RegExp', RegExp],
         ['Function', undefined],
-        ['Error', Error],
-        ['TypeError', TypeError],
-        ['RangeError', RangeError],
-        ['SyntaxError', SyntaxError],
-        ['encodeURIComponent', encodeURIComponent],
-        ['decodeURIComponent', decodeURIComponent],
-        ['encodeURI', encodeURI],
-        ['decodeURI', decodeURI],
-        ['Math', Math],
-        ['Date', Date],
-        ['JSON', JSON],
-        ['NaN', NaN],
-        ['Infinity', Infinity],
-        ['undefined', undefined],
-        ['setTimeout', function() { return 1; }],
-        ['setInterval', function() { return 1; }],
-        ['clearTimeout', function() {}],
-        ['clearInterval', function() {}],
-        ['$', mock$],
-        ['jQuery', mock$],
+        ['Error', Error], ['TypeError', TypeError],
+        ['RangeError', RangeError], ['SyntaxError', SyntaxError],
+        ['encodeURIComponent', encodeURIComponent], ['decodeURIComponent', decodeURIComponent],
+        ['encodeURI', encodeURI], ['decodeURI', decodeURI],
+        ['Math', Math], ['Date', Date], ['JSON', JSON],
+        ['NaN', NaN], ['Infinity', Infinity], ['undefined', undefined],
+        ['setTimeout', function() { return 1; }], ['setInterval', function() { return 1; }],
+        ['clearTimeout', function() {}], ['clearInterval', function() {}],
+        ['$', mock$], ['jQuery', mock$],
         ['Cookies', { get: function() { return null; }, set: function() {} }],
-        ['atob', polyfillAtob],
-        ['btoa', polyfillBtoa],
+        ['atob', polyfillAtob], ['btoa', polyfillBtoa],
     ];
 
-    // Build a scope object for window/self/globalThis to reference
     var scopeObj = {};
     for (var i = 0; i < scopeEntries.length; i++) {
         scopeObj[scopeEntries[i][0]] = scopeEntries[i][1];
     }
-    scopeObj.window = scopeObj;
-    scopeObj.self = scopeObj;
-    scopeObj.globalThis = scopeObj;
-
-    scopeEntries.push(['window', scopeObj]);
-    scopeEntries.push(['self', scopeObj]);
-    scopeEntries.push(['globalThis', scopeObj]);
+    scopeObj.window = scopeObj; scopeObj.self = scopeObj; scopeObj.globalThis = scopeObj;
+    scopeEntries.push(['window', scopeObj], ['self', scopeObj], ['globalThis', scopeObj]);
 
     var paramNames = scopeEntries.map(function(e) { return e[0]; }).join(', ');
     var paramValues = scopeEntries.map(function(e) { return e[1]; });
 
     try {
-        console.log('[FaselHDX] sandbox: creating Function with ' + scopeEntries.length + ' params, script len=' + scriptContent.length);
         var executor = new Function(paramNames, scriptContent);
-        console.log('[FaselHDX] sandbox: Function created OK, executing...');
         executor.apply(null, paramValues);
-        console.log('[FaselHDX] sandbox: execution done, captured ' + captured.length + ' chars');
     } catch (e) {
-        console.error('[FaselHDX] sandbox exec error: ' + (e && e.message ? e.message : String(e)));
-        console.error('[FaselHDX] sandbox exec stack: ' + (e && e.stack ? e.stack.substring(0, 200) : 'none'));
+        console.error('[FaselHDX] sandbox error: ' + (e && e.message || e));
     }
-
     return captured;
 }
 
-/**
- * Extract stream URLs from the quality_change div's inline script.
- */
-function extractQualityScriptUrls(playerHtml) {
-    console.log('[FaselHDX] extractQualityScriptUrls: html len=' + playerHtml.length);
+function extractQualityScriptUrls(playerHtml, baseUrl) {
     var qcMatch = playerHtml.match(/<div\s+class="quality_change">([\s\S]*?)<\/div>/i);
-    if (!qcMatch) {
-        console.log('[FaselHDX] extractQualityScriptUrls: no quality_change div found');
-        return [];
-    }
-    console.log('[FaselHDX] extractQualityScriptUrls: quality_change div len=' + qcMatch[1].length);
-
+    if (!qcMatch) return [];
     var scriptMatch = qcMatch[1].match(/<script[^>]*>([\s\S]+?)<\/script>/i);
-    if (!scriptMatch) {
-        console.log('[FaselHDX] extractQualityScriptUrls: no script tag in quality_change');
-        return [];
-    }
+    if (!scriptMatch || scriptMatch[1].trim().length < 500) return [];
 
-    var scriptContent = scriptMatch[1].trim();
-    console.log('[FaselHDX] extractQualityScriptUrls: script len=' + scriptContent.length);
-    if (scriptContent.length < 500) {
-        console.log('[FaselHDX] extractQualityScriptUrls: script too short, skipping');
-        return [];
-    }
-
-    console.log('[FaselHDX] extractQualityScriptUrls: about to execute sandbox...');
-    var htmlOutput = executeQualityScript(scriptContent);
-    console.log('[FaselHDX] extractQualityScriptUrls: sandbox returned ' + (htmlOutput ? htmlOutput.length : 0) + ' chars');
+    var htmlOutput = executeQualityScript(scriptMatch[1].trim(), baseUrl);
     if (!htmlOutput) return [];
 
     var urls = [];
@@ -444,17 +303,12 @@ function extractQualityScriptUrls(playerHtml) {
     while ((m = re.exec(htmlOutput)) !== null) {
         if (m[1] && /^https?:\/\//i.test(m[1])) urls.push(m[1]);
     }
-    console.log('[FaselHDX] extractQualityScriptUrls: found ' + urls.length + ' data-url entries');
-
     return urls;
 }
 
-/**
- * Fallback: extract literal m3u8 URLs from HTML
- */
-function extractLiteralUrls(playerHtml) {
+function extractLiteralUrls(html) {
     var urls = [];
-    var normalized = String(playerHtml || '').replace(/\\\//g, '/');
+    var normalized = String(html || '').replace(/\\\//g, '/');
     var re = /https?:\/\/[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?/gi;
     var m;
     while ((m = re.exec(normalized)) !== null) {
@@ -463,18 +317,13 @@ function extractLiteralUrls(playerHtml) {
     return urls;
 }
 
-async function resolveDirectFromPlayer(playerUrl, pageUrl) {
+async function resolveDirectFromPlayer(playerUrl, pageUrl, baseUrl) {
     try {
         var html = await fetchText(playerUrl, {
-            headers: {
-                ...HEADERS,
-                Referer: pageUrl,
-                Origin: BASE_URL,
-            },
+            headers: { ...HEADERS, Referer: pageUrl, Origin: baseUrl },
         });
 
-        // Primary: execute quality_change script to get URLs
-        var qcUrls = extractQualityScriptUrls(html);
+        var qcUrls = extractQualityScriptUrls(html, baseUrl);
         if (qcUrls.length > 0) {
             return qcUrls.map(function(url) {
                 var quality = 'auto';
@@ -482,47 +331,32 @@ async function resolveDirectFromPlayer(playerUrl, pageUrl) {
                 else if (/hd720/i.test(url)) quality = '720p';
                 else if (/sd480/i.test(url)) quality = '480p';
                 else if (/sd360/i.test(url)) quality = '360p';
-
                 return {
-                    url: url,
-                    quality: quality,
-                    headers: {
-                        ...HEADERS,
-                        Referer: BASE_URL + '/',
-                        Origin: BASE_URL,
-                    },
+                    url: url, quality: quality,
+                    headers: { ...HEADERS, Referer: baseUrl + '/', Origin: baseUrl },
                 };
             });
         }
 
-        // Fallback: literal m3u8 URLs in HTML
         var literalUrls = extractLiteralUrls(html);
         return literalUrls.map(function(url) {
             return {
-                url: url,
-                quality: 'auto',
-                headers: {
-                    ...HEADERS,
-                    Referer: BASE_URL + '/',
-                    Origin: BASE_URL,
-                },
+                url: url, quality: 'auto',
+                headers: { ...HEADERS, Referer: baseUrl + '/', Origin: baseUrl },
             };
         });
     } catch (e) {
-        console.error('[FaselHDX] resolveDirectFromPlayer error: ' + e.message);
         return [];
     }
 }
 
 function buildStreams(directStreams) {
     var qualityOrder = { '1080p': 0, '720p': 1, '480p': 2, '360p': 3, 'auto': 4 };
-
     var sorted = directStreams.slice().sort(function(a, b) {
         var oa = a.quality in qualityOrder ? qualityOrder[a.quality] : 99;
         var ob = b.quality in qualityOrder ? qualityOrder[b.quality] : 99;
         return oa - ob;
     });
-
     var streams = [];
     for (var i = 0; i < sorted.length; i++) {
         var s = sorted[i];
@@ -535,42 +369,30 @@ function buildStreams(directStreams) {
             headers: s.headers,
         });
     }
-
     return streams;
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    console.log('[FaselHDX] Resolving source for ' + mediaType + ':' + tmdbId + ' s=' + (season || '-') + ' e=' + (episode || '-'));
+    var baseUrl = await resolveBaseUrl();
 
-    var pageUrl = await resolvePageUrl(tmdbId, mediaType, season, episode);
-    if (!pageUrl) {
-        console.log('[FaselHDX] No matching page found');
-        return [];
-    }
-
-    console.log('[FaselHDX] Selected page: ' + pageUrl);
+    var pageUrl = await resolvePageUrl(tmdbId, mediaType, season, episode, baseUrl);
+    if (!pageUrl) return [];
 
     var html = await fetchText(pageUrl, {
-        headers: {
-            ...HEADERS,
-            Referer: BASE_URL + '/main',
-        },
+        headers: { ...HEADERS, Referer: baseUrl + '/main' },
     });
 
     var $ = cheerio.load(html);
     var playerUrls = extractPlayerUrls($);
 
-    console.log('[FaselHDX] Found ' + playerUrls.length + ' player URLs');
-
     var allStreams = [];
     for (var i = 0; i < playerUrls.length; i++) {
-        var streams = await resolveDirectFromPlayer(playerUrls[i], pageUrl);
+        var streams = await resolveDirectFromPlayer(playerUrls[i], pageUrl, baseUrl);
         allStreams.push.apply(allStreams, streams);
         if (allStreams.length > 0) break;
     }
 
     var result = buildStreams(allStreams);
-
     var seen = {};
     var deduped = [];
     for (var j = 0; j < result.length; j++) {
@@ -578,7 +400,5 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         seen[result[j].url] = true;
         deduped.push(result[j]);
     }
-
-    console.log('[FaselHDX] Found ' + deduped.length + ' stream candidates');
     return deduped;
 }
