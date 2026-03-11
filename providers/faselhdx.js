@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-08T02:55:43.155Z
+ * Generated: 2026-03-11T16:50:54.055Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -153,9 +153,19 @@ function searchCandidates(query, baseUrl) {
   return __async(this, null, function* () {
     if (!query)
       return [];
-    var html = yield fetchText(baseUrl + "/?s=" + encodeURIComponent(query), {
-      headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: baseUrl + "/main" })
+    var ajaxUrl = baseUrl + "/wp-admin/admin-ajax.php";
+    var response = yield fetch(ajaxUrl, {
+      method: "POST",
+      headers: __spreadProps(__spreadValues({}, HEADERS), {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest",
+        Referer: baseUrl + "/main"
+      }),
+      body: "action=dtc_live&trsearch=" + encodeURIComponent(query)
     });
+    if (!response.ok)
+      return [];
+    var html = yield response.text();
     return extractSearchUrls(html);
   });
 }

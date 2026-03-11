@@ -1,12 +1,12 @@
 {
   "name": "FaselHDX Repo",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "scrapers": [
     {
       "id": "FaselHDX",
       "name": "FaselHDX",
       "description": "Arabic streaming from FaselHDX with multi-quality HLS support",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",

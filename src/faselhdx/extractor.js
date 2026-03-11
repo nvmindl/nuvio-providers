@@ -45,9 +45,19 @@ function extractSearchUrls(html) {
 
 async function searchCandidates(query, baseUrl) {
     if (!query) return [];
-    var html = await fetchText(baseUrl + '/?s=' + encodeURIComponent(query), {
-        headers: { ...HEADERS, Referer: baseUrl + '/main' },
+    var ajaxUrl = baseUrl + '/wp-admin/admin-ajax.php';
+    var response = await fetch(ajaxUrl, {
+        method: 'POST',
+        headers: {
+            ...HEADERS,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+            Referer: baseUrl + '/main',
+        },
+        body: 'action=dtc_live&trsearch=' + encodeURIComponent(query),
     });
+    if (!response.ok) return [];
+    var html = await response.text();
     return extractSearchUrls(html);
 }
 
