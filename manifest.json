@@ -1,6 +1,6 @@
 {
-  "name": "FaselHDX Repo",
-  "version": "1.0.3",
+  "name": "Nuvio Providers",
+  "version": "1.1.0",
   "scrapers": [
     {
       "id": "FaselHDX",
@@ -23,6 +23,27 @@
       "contentLanguage": [
         "ar",
         "en"
+      ]
+    },
+    {
+      "id": "Kirmzi",
+      "name": "Kirmzi",
+      "description": "Turkish drama series with Arabic subtitles from Kirmzi",
+      "version": "1.0.0",
+      "author": "Nuvio Team",
+      "supportedTypes": [
+        "tv"
+      ],
+      "filename": "providers/kirmzi.js",
+      "enabled": true,
+      "formats": [
+        "m3u8"
+      ],
+      "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/kirmzi.png",
+      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/kirmzi.png",
+      "contentLanguage": [
+        "ar",
+        "tr"
       ]
     }
   ]
