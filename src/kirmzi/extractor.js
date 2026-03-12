@@ -240,49 +240,96 @@ async function tryExtractFromEmbed(embedUrl) {
 
 // ─── Build streams ──────────────────────────────────────────────────────────
 
-function buildStreams(result) {
-    if (!result || !result.m3u8) return [];
+function resolutionToLabel(res) {
+    if (!res) return 'auto';
+    var h = parseInt(res.split('x')[1], 10) || 0;
+    if (h >= 1080) return '1080p';
+    if (h >= 720) return '720p';
+    if (h >= 480) return '480p';
+    if (h >= 360) return '360p';
+    return h ? h + 'p' : 'auto';
+}
 
-    var streams = [];
-    var labels = result.labels || {};
-    var labelValues = Object.keys(labels).map(function(k) { return labels[k]; });
-
-    // Map quality labels to standard names
-    var qualityMap = {};
-    for (var i = 0; i < labelValues.length; i++) {
-        var label = labelValues[i];
-        if (/1080/.test(label)) qualityMap['1080p'] = true;
-        else if (/720/.test(label)) qualityMap['720p'] = true;
-        else if (/480/.test(label)) qualityMap['480p'] = true;
-        else if (/360/.test(label)) qualityMap['360p'] = true;
+function parseMasterPlaylist(m3u8Text) {
+    var variants = [];
+    var lines = m3u8Text.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf('#EXT-X-STREAM-INF') !== 0) continue;
+        var resMatch = line.match(/RESOLUTION=([0-9]+x[0-9]+)/);
+        var bwMatch = line.match(/BANDWIDTH=(\d+)/);
+        var url = '';
+        for (var j = i + 1; j < lines.length; j++) {
+            var next = lines[j].trim();
+            if (next && next[0] !== '#') { url = next; break; }
+        }
+        if (url) {
+            variants.push({
+                url: url,
+                resolution: resMatch ? resMatch[1] : '',
+                bandwidth: bwMatch ? parseInt(bwMatch[1], 10) : 0,
+            });
+        }
     }
+    // Sort by bandwidth descending (highest quality first)
+    variants.sort(function(a, b) { return b.bandwidth - a.bandwidth; });
+    return variants;
+}
 
-    var qualities = Object.keys(qualityMap);
-    if (qualities.length === 0) qualities = ['auto'];
-
-    // The m3u8 is a master playlist that contains all qualities
-    // We return it as a single stream since HLS handles quality switching
-    var qualityLabel = qualities.length > 0 ? qualities.join('/') : 'auto';
-    var bestQuality = 'auto';
-    if (qualityMap['1080p']) bestQuality = '1080p';
-    else if (qualityMap['720p']) bestQuality = '720p';
-    else if (qualityMap['480p']) bestQuality = '480p';
-
-    // Extract the referer domain from the embed URL
+function buildStreamHeaders(embedUrl) {
     var referer = '';
     try {
-        var embedDomain = result.embedUrl.match(/^(https?:\/\/[^/]+)/);
+        var embedDomain = embedUrl.match(/^(https?:\/\/[^/]+)/);
         referer = embedDomain ? embedDomain[1] + '/' : '';
     } catch(e) {}
+    return {
+        'Referer': referer,
+        'Origin': referer.replace(/\/$/, ''),
+        'User-Agent': HEADERS['User-Agent'],
+    };
+}
 
-    streams.push({
-        name: 'Kirmzi - ' + bestQuality,
-        title: bestQuality,
-        url: result.m3u8,
-        quality: bestQuality,
-        headers: referer ? { 'Referer': referer, 'Origin': referer.replace(/\/$/, '') } : {},
-    });
+async function buildStreams(result) {
+    if (!result || !result.m3u8) return [];
 
+    var headers = buildStreamHeaders(result.embedUrl);
+
+    // Fetch the master playlist to extract individual quality variants
+    var masterText = await fetchText(result.m3u8, { headers: headers });
+    if (!masterText || masterText.indexOf('#EXTM3U') !== 0) {
+        // Fallback: return master URL as single auto stream
+        return [{
+            name: 'Kirmzi - Auto',
+            title: 'Auto',
+            url: result.m3u8,
+            quality: 'auto',
+            headers: headers,
+        }];
+    }
+
+    var variants = parseMasterPlaylist(masterText);
+    if (variants.length === 0) {
+        return [{
+            name: 'Kirmzi - Auto',
+            title: 'Auto',
+            url: result.m3u8,
+            quality: 'auto',
+            headers: headers,
+        }];
+    }
+
+    var streams = [];
+    for (var i = 0; i < variants.length; i++) {
+        var v = variants[i];
+        var quality = resolutionToLabel(v.resolution);
+        streams.push({
+            name: 'Kirmzi - ' + quality,
+            title: quality,
+            url: v.url,
+            quality: quality,
+            headers: headers,
+        });
+    }
     return streams;
 }
 
@@ -333,5 +380,5 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
     console.log('[Kirmzi] Found m3u8: ' + result.m3u8.substring(0, 80) + '...');
 
-    return buildStreams(result);
+    return await buildStreams(result);
 }
