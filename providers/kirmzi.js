@@ -1,6 +1,6 @@
 /**
  * kirmzi - Built from src/kirmzi/
- * Generated: 2026-03-12T04:40:10.188Z
+ * Generated: 2026-03-12T04:48:09.294Z
  */
 var __defProp = Object.defineProperty;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -90,15 +90,24 @@ var TMDB_API_BASE = "https://api.themoviedb.org/3";
 var ALBA_BASE = "https://w.shadwo.pro/albaplayer";
 function resolveTmdbMeta(tmdbId) {
   return __async(this, null, function* () {
-    var url = TMDB_API_BASE + "/tv/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=ar-SA";
-    var response = yield fetch(url, {
-      method: "GET",
-      headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
-    });
-    if (!response.ok)
-      throw new Error("TMDB " + response.status);
-    var data = yield response.json();
-    return { arabicTitle: data.name || "" };
+    var arUrl = TMDB_API_BASE + "/tv/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=ar-SA";
+    var enUrl = TMDB_API_BASE + "/tv/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
+    var fetchOpts = { method: "GET", headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" } };
+    var results = yield Promise.all([
+      fetch(arUrl, fetchOpts).then(function(r) {
+        return r.ok ? r.json() : {};
+      }),
+      fetch(enUrl, fetchOpts).then(function(r) {
+        return r.ok ? r.json() : {};
+      })
+    ]);
+    var arData = results[0];
+    var enData = results[1];
+    return {
+      arabicTitle: arData.name || "",
+      englishTitle: enData.name || "",
+      originalTitle: enData.original_name || ""
+    };
   });
 }
 function buildEpisodeSlug(arabicTitle, episode) {
@@ -351,11 +360,28 @@ function findEpisodeUrl(episodeUrls, episode) {
   }
   return "";
 }
-function searchForEpisode(arabicTitle, episode) {
+function searchForEpisode(meta, episode) {
+  return __async(this, null, function* () {
+    var terms = [];
+    if (meta.arabicTitle)
+      terms.push(meta.arabicTitle);
+    if (meta.englishTitle && terms.indexOf(meta.englishTitle) < 0)
+      terms.push(meta.englishTitle);
+    if (meta.originalTitle && terms.indexOf(meta.originalTitle) < 0)
+      terms.push(meta.originalTitle);
+    for (var t = 0; t < terms.length; t++) {
+      var result = yield searchSiteForEpisode(terms[t], episode);
+      if (result)
+        return result;
+    }
+    return "";
+  });
+}
+function searchSiteForEpisode(query, episode) {
   return __async(this, null, function* () {
     var base = getBaseUrl();
-    var searchUrl = base + "/?s=" + encodeURIComponent(arabicTitle);
-    console.log("[Kirmzi] Searching: " + searchUrl);
+    var searchUrl = base + "/?s=" + encodeURIComponent(query);
+    console.log("[Kirmzi] Searching: " + decodeURIComponent(searchUrl).substring(0, 80));
     var searchHtml = yield fetchText(searchUrl);
     if (!searchHtml)
       return "";
@@ -401,19 +427,15 @@ function extractStreams(tmdbId, mediaType, season, episode) {
     var episodeUrl = buildEpisodeUrl(meta.arabicTitle, episode);
     console.log("[Kirmzi] Episode URL: " + episodeUrl);
     var episodeHtml = yield fetchText(episodeUrl);
-    if (!episodeHtml || episodeHtml.length < 1e3) {
-      console.log("[Kirmzi] Direct slug not found, trying search...");
-      var searchedUrl = yield searchForEpisode(meta.arabicTitle, episode);
+    var albaUrl = episodeHtml ? extractAlbaplayerUrl(episodeHtml) : "";
+    if (!albaUrl) {
+      console.log("[Kirmzi] Direct slug has no player, trying search...");
+      var searchedUrl = yield searchForEpisode(meta, episode);
       if (searchedUrl) {
-        episodeUrl = searchedUrl;
-        episodeHtml = yield fetchText(episodeUrl);
+        episodeHtml = yield fetchText(searchedUrl);
+        albaUrl = episodeHtml ? extractAlbaplayerUrl(episodeHtml) : "";
       }
     }
-    if (!episodeHtml || episodeHtml.length < 1e3) {
-      console.log("[Kirmzi] Episode page not found or empty");
-      return [];
-    }
-    var albaUrl = extractAlbaplayerUrl(episodeHtml);
     if (!albaUrl) {
       console.log("[Kirmzi] No albaplayer iframe found");
       return [];

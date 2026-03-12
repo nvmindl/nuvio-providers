@@ -7,14 +7,20 @@ var ALBA_BASE = 'https://w.shadwo.pro/albaplayer';
 // ─── TMDB helpers ───────────────────────────────────────────────────────────
 
 async function resolveTmdbMeta(tmdbId) {
-    var url = TMDB_API_BASE + '/tv/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=ar-SA';
-    var response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-    });
-    if (!response.ok) throw new Error('TMDB ' + response.status);
-    var data = await response.json();
-    return { arabicTitle: data.name || '' };
+    var arUrl = TMDB_API_BASE + '/tv/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=ar-SA';
+    var enUrl = TMDB_API_BASE + '/tv/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=en-US';
+    var fetchOpts = { method: 'GET', headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' } };
+    var results = await Promise.all([
+        fetch(arUrl, fetchOpts).then(function(r) { return r.ok ? r.json() : {}; }),
+        fetch(enUrl, fetchOpts).then(function(r) { return r.ok ? r.json() : {}; }),
+    ]);
+    var arData = results[0];
+    var enData = results[1];
+    return {
+        arabicTitle: arData.name || '',
+        englishTitle: enData.name || '',
+        originalTitle: enData.original_name || '',
+    };
 }
 
 // ─── URL construction ───────────────────────────────────────────────────────
@@ -332,10 +338,24 @@ function findEpisodeUrl(episodeUrls, episode) {
     return '';
 }
 
-async function searchForEpisode(arabicTitle, episode) {
+async function searchForEpisode(meta, episode) {
+    // Build unique search terms from available titles
+    var terms = [];
+    if (meta.arabicTitle) terms.push(meta.arabicTitle);
+    if (meta.englishTitle && terms.indexOf(meta.englishTitle) < 0) terms.push(meta.englishTitle);
+    if (meta.originalTitle && terms.indexOf(meta.originalTitle) < 0) terms.push(meta.originalTitle);
+
+    for (var t = 0; t < terms.length; t++) {
+        var result = await searchSiteForEpisode(terms[t], episode);
+        if (result) return result;
+    }
+    return '';
+}
+
+async function searchSiteForEpisode(query, episode) {
     var base = getBaseUrl();
-    var searchUrl = base + '/?s=' + encodeURIComponent(arabicTitle);
-    console.log('[Kirmzi] Searching: ' + searchUrl);
+    var searchUrl = base + '/?s=' + encodeURIComponent(query);
+    console.log('[Kirmzi] Searching: ' + decodeURIComponent(searchUrl).substring(0, 80));
 
     var searchHtml = await fetchText(searchUrl);
     if (!searchHtml) return '';
@@ -392,24 +412,18 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     // Fetch the episode page
     var episodeHtml = await fetchText(episodeUrl);
+    var albaUrl = episodeHtml ? extractAlbaplayerUrl(episodeHtml) : '';
 
-    // If direct slug fails, fall back to site search
-    if (!episodeHtml || episodeHtml.length < 1000) {
-        console.log('[Kirmzi] Direct slug not found, trying search...');
-        var searchedUrl = await searchForEpisode(meta.arabicTitle, episode);
+    // If direct slug fails or has no player, fall back to site search
+    if (!albaUrl) {
+        console.log('[Kirmzi] Direct slug has no player, trying search...');
+        var searchedUrl = await searchForEpisode(meta, episode);
         if (searchedUrl) {
-            episodeUrl = searchedUrl;
-            episodeHtml = await fetchText(episodeUrl);
+            episodeHtml = await fetchText(searchedUrl);
+            albaUrl = episodeHtml ? extractAlbaplayerUrl(episodeHtml) : '';
         }
     }
 
-    if (!episodeHtml || episodeHtml.length < 1000) {
-        console.log('[Kirmzi] Episode page not found or empty');
-        return [];
-    }
-
-    // Extract albaplayer iframe URL
-    var albaUrl = extractAlbaplayerUrl(episodeHtml);
     if (!albaUrl) {
         console.log('[Kirmzi] No albaplayer iframe found');
         return [];
