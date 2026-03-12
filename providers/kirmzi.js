@@ -1,6 +1,6 @@
 /**
  * kirmzi - Built from src/kirmzi/
- * Generated: 2026-03-12T04:20:41.771Z
+ * Generated: 2026-03-12T04:40:10.188Z
  */
 var __defProp = Object.defineProperty;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -315,6 +315,72 @@ function buildStreams(result) {
     headers
   }];
 }
+function extractSeriesUrls(html) {
+  var urls = [];
+  var re = /href="(https?:\/\/[^"]*\/series\/[^"]*)"/gi;
+  var m;
+  var seen = {};
+  while ((m = re.exec(html)) !== null) {
+    if (!seen[m[1]]) {
+      seen[m[1]] = true;
+      urls.push(m[1]);
+    }
+  }
+  return urls;
+}
+function extractEpisodeUrls(html) {
+  var urls = [];
+  var re = /href="(https?:\/\/[^"]*\/episode\/[^"]*)"/gi;
+  var m;
+  var seen = {};
+  while ((m = re.exec(html)) !== null) {
+    if (!seen[m[1]]) {
+      seen[m[1]] = true;
+      urls.push(m[1]);
+    }
+  }
+  return urls;
+}
+function findEpisodeUrl(episodeUrls, episode) {
+  var epNum = parseInt(episode, 10);
+  for (var i = 0; i < episodeUrls.length; i++) {
+    var decoded = decodeURIComponent(episodeUrls[i]);
+    var epMatch = decoded.match(/\u0627\u0644\u062d\u0644\u0642\u0629-(\d+)/);
+    if (epMatch && parseInt(epMatch[1], 10) === epNum)
+      return episodeUrls[i];
+  }
+  return "";
+}
+function searchForEpisode(arabicTitle, episode) {
+  return __async(this, null, function* () {
+    var base = getBaseUrl();
+    var searchUrl = base + "/?s=" + encodeURIComponent(arabicTitle);
+    console.log("[Kirmzi] Searching: " + searchUrl);
+    var searchHtml = yield fetchText(searchUrl);
+    if (!searchHtml)
+      return "";
+    var episodeUrls = extractEpisodeUrls(searchHtml);
+    var directMatch = findEpisodeUrl(episodeUrls, episode);
+    if (directMatch) {
+      console.log("[Kirmzi] Found episode directly in search results");
+      return directMatch;
+    }
+    var seriesUrls = extractSeriesUrls(searchHtml);
+    for (var i = 0; i < seriesUrls.length; i++) {
+      console.log("[Kirmzi] Checking series: " + decodeURIComponent(seriesUrls[i]).substring(0, 80));
+      var seriesHtml = yield fetchText(seriesUrls[i]);
+      if (!seriesHtml)
+        continue;
+      var epUrls = extractEpisodeUrls(seriesHtml);
+      var match = findEpisodeUrl(epUrls, episode);
+      if (match) {
+        console.log("[Kirmzi] Found episode from series page");
+        return match;
+      }
+    }
+    return "";
+  });
+}
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     if (mediaType !== "tv") {
@@ -335,6 +401,14 @@ function extractStreams(tmdbId, mediaType, season, episode) {
     var episodeUrl = buildEpisodeUrl(meta.arabicTitle, episode);
     console.log("[Kirmzi] Episode URL: " + episodeUrl);
     var episodeHtml = yield fetchText(episodeUrl);
+    if (!episodeHtml || episodeHtml.length < 1e3) {
+      console.log("[Kirmzi] Direct slug not found, trying search...");
+      var searchedUrl = yield searchForEpisode(meta.arabicTitle, episode);
+      if (searchedUrl) {
+        episodeUrl = searchedUrl;
+        episodeHtml = yield fetchText(episodeUrl);
+      }
+    }
     if (!episodeHtml || episodeHtml.length < 1e3) {
       console.log("[Kirmzi] Episode page not found or empty");
       return [];
