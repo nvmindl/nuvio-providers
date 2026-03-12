@@ -16,7 +16,16 @@ function unique(values) {
 var TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 var TMDB_API_BASE = 'https://api.themoviedb.org/3';
 
+// In-memory caches (module-level, survive across getStreams calls)
+// So ep2 of same show skips search + seasons + sub-season page fetches
+var _episodeCache = {};
+var _tmdbCache = {};
+var _searchCache = {};
+
+
 async function resolveTmdbMeta(tmdbId, mediaType) {
+    var cacheKey = tmdbId + '_' + mediaType;
+    if (_tmdbCache[cacheKey]) return _tmdbCache[cacheKey];
     var endpoint = mediaType === 'movie' ? 'movie' : 'tv';
     var url = TMDB_API_BASE + '/' + endpoint + '/' + tmdbId + '?api_key=' + TMDB_API_KEY;
     var response = await fetch(url, {
@@ -28,7 +37,9 @@ async function resolveTmdbMeta(tmdbId, mediaType) {
     var title = mediaType === 'tv' ? (data.name || '') : (data.title || '');
     var releaseDate = mediaType === 'tv' ? (data.first_air_date || '') : (data.release_date || '');
     var year = releaseDate ? releaseDate.split('-')[0] : '';
-    return { title: cleanText(title), year: year };
+    var result = { title: cleanText(title), year: year };
+    _tmdbCache[cacheKey] = result;
+    return result;
 }
 
 // Extract content URLs from search HTML using regex (much faster than cheerio on 120KB pages)
@@ -90,7 +101,36 @@ function extractEpisodeLinks(html) {
     return links;
 }
 
-async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl) {
+function extractOnclickUrl(tag, baseUrl) {
+    var onclickMatch = tag.match(/onclick="([^"]*)"/i);
+    if (!onclickMatch) return '';
+    var onclick = onclickMatch[1];
+    var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
+    if (!pMatch || !pMatch[1]) return '';
+    var url = pMatch[1];
+    if (!/^https?:\/\//i.test(url)) url = baseUrl + url;
+    return url;
+}
+
+function findEpisodeInLinks(episodeLinks, episode) {
+    var epNum = parseInt(episode, 10);
+    for (var i = 0; i < episodeLinks.length; i++) {
+        var decoded = decodeURIComponent(episodeLinks[i]);
+        var numMatch = decoded.match(/-(\d+)(?:-[^/]*)?\/?$/);
+        if (numMatch && parseInt(numMatch[1], 10) === epNum) return episodeLinks[i];
+    }
+    if (epNum >= 1 && epNum <= episodeLinks.length) return episodeLinks[epNum - 1];
+    return '';
+}
+
+async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl, cacheId) {
+    // Check cache: skip search + seasons + sub-season fetch for same series
+    var cacheKey = (cacheId || seasonsPageUrl) + '_s' + season;
+    if (_episodeCache[cacheKey]) {
+        console.log('[FaselHDX] Cache hit for ' + cacheKey);
+        return findEpisodeInLinks(_episodeCache[cacheKey], episode);
+    }
+
     var html = await fetchText(seasonsPageUrl, {
         headers: { ...HEADERS, Referer: baseUrl + '/main' },
     });
@@ -112,19 +152,12 @@ async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUr
     var episodeLinks = extractEpisodeLinks(seasonBlock);
 
     if (episodeLinks.length === 0) {
-        // Check onclick for a season page URL
-        var onclickMatch = divTags[seasonIdx].tag.match(/onclick="([^"]*)"/i);
-        var onclick = onclickMatch ? onclickMatch[1] : '';
-        if (onclick) {
-            var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
-            if (pMatch && pMatch[1]) {
-                var seasonUrl = pMatch[1];
-                if (!/^https?:\/\//i.test(seasonUrl)) seasonUrl = baseUrl + seasonUrl;
-                var sHtml = await fetchText(seasonUrl, {
-                    headers: { ...HEADERS, Referer: seasonsPageUrl },
-                });
-                if (sHtml) episodeLinks = extractEpisodeLinks(sHtml);
-            }
+        var seasonUrl = extractOnclickUrl(divTags[seasonIdx].tag, baseUrl);
+        if (seasonUrl) {
+            var sHtml = await fetchText(seasonUrl, {
+                headers: { ...HEADERS, Referer: seasonsPageUrl },
+            });
+            if (sHtml) episodeLinks = extractEpisodeLinks(sHtml);
         }
     }
 
@@ -134,30 +167,28 @@ async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUr
     episodeLinks = unique(episodeLinks);
     if (episodeLinks.length === 0) return '';
 
-    var epNum = parseInt(episode, 10);
-    var match = '';
-    for (var i = 0; i < episodeLinks.length; i++) {
-        var decoded = decodeURIComponent(episodeLinks[i]);
-        var numMatch = decoded.match(/-(\d+)(?:-[^/]*)?\/?$/);
-        if (numMatch && parseInt(numMatch[1], 10) === epNum) {
-            match = episodeLinks[i];
-            break;
-        }
-    }
-    if (!match && epNum >= 1 && epNum <= episodeLinks.length) {
-        match = episodeLinks[epNum - 1];
-    }
-    return match;
+    // Cache for subsequent episode lookups
+    _episodeCache[cacheKey] = episodeLinks;
+    console.log('[FaselHDX] Cached ' + episodeLinks.length + ' episodes for ' + cacheKey);
+
+    return findEpisodeInLinks(episodeLinks, episode);
 }
 
 async function resolvePageUrl(tmdbMeta, mediaType, season, episode, baseUrl) {
-    // Search title only first (faster); fall back to title+year if no results
-    var candidates = await searchCandidates(tmdbMeta.title, baseUrl);
-    if (candidates.length === 0 && tmdbMeta.year) {
-        candidates = await searchCandidates(tmdbMeta.title + ' ' + tmdbMeta.year, baseUrl);
-    }
+    var searchKey = tmdbMeta.title + '_' + (tmdbMeta.year || '');
 
-    candidates = unique(candidates);
+    // Use cached search result if available
+    var candidates;
+    if (_searchCache[searchKey]) {
+        candidates = _searchCache[searchKey];
+    } else {
+        candidates = await searchCandidates(tmdbMeta.title, baseUrl);
+        if (candidates.length === 0 && tmdbMeta.year) {
+            candidates = await searchCandidates(tmdbMeta.title + ' ' + tmdbMeta.year, baseUrl);
+        }
+        candidates = unique(candidates);
+        _searchCache[searchKey] = candidates;
+    }
     if (candidates.length === 0) return '';
 
     var ranked = candidates
@@ -169,7 +200,7 @@ async function resolvePageUrl(tmdbMeta, mediaType, season, episode, baseUrl) {
     var bestUrl = ranked[0] ? ranked[0].url : '';
 
     if (mediaType === 'tv' && season && episode && bestUrl && /\/(seasons|anime)\//.test(bestUrl)) {
-        var episodeUrl = await resolveEpisodeFromSeasons(bestUrl, season, episode, baseUrl);
+        var episodeUrl = await resolveEpisodeFromSeasons(bestUrl, season, episode, baseUrl, tmdbMeta.title);
         if (episodeUrl) return episodeUrl;
     }
 
@@ -196,11 +227,11 @@ function executeQualityScript(scriptContent, baseUrl) {
         /\['test'\]\(this\['[^']+'\]\['toString'\]\(\)\)/g,
         "['test'](\"function (){return'newState';}\")"
     );
-    // Cap while(!![]) loops (1000 iterations is plenty)
+    // Cap while(!![]) loops (500 iterations is plenty for quality extraction)
     var lc = 0;
     scriptContent = scriptContent.replace(/while\s*\(\s*!!\s*\[\s*\]\s*\)\s*\{/g, function() {
         lc++;
-        return 'var __lc' + lc + '=0;while(++__lc' + lc + '<1000){';
+        return 'var __lc' + lc + '=0;while(++__lc' + lc + '<500){';
     });
     scriptContent = scriptContent.replace(/\bdebugger\b/g, 'void 0');
 

@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-12T04:27:11.828Z
+ * Generated: 2026-03-12T18:30:55.263Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -121,8 +121,14 @@ function unique(values) {
 }
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_API_BASE = "https://api.themoviedb.org/3";
+var _episodeCache = {};
+var _tmdbCache = {};
+var _searchCache = {};
 function resolveTmdbMeta(tmdbId, mediaType) {
   return __async(this, null, function* () {
+    var cacheKey = tmdbId + "_" + mediaType;
+    if (_tmdbCache[cacheKey])
+      return _tmdbCache[cacheKey];
     var endpoint = mediaType === "movie" ? "movie" : "tv";
     var url = TMDB_API_BASE + "/" + endpoint + "/" + tmdbId + "?api_key=" + TMDB_API_KEY;
     var response = yield fetch(url, {
@@ -135,7 +141,9 @@ function resolveTmdbMeta(tmdbId, mediaType) {
     var title = mediaType === "tv" ? data.name || "" : data.title || "";
     var releaseDate = mediaType === "tv" ? data.first_air_date || "" : data.release_date || "";
     var year = releaseDate ? releaseDate.split("-")[0] : "";
-    return { title: cleanText(title), year };
+    var result = { title: cleanText(title), year };
+    _tmdbCache[cacheKey] = result;
+    return result;
   });
 }
 function extractSearchUrls(html) {
@@ -207,8 +215,38 @@ function extractEpisodeLinks(html) {
     links.push(m[1]);
   return links;
 }
-function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl) {
+function extractOnclickUrl(tag, baseUrl) {
+  var onclickMatch = tag.match(/onclick="([^"]*)"/i);
+  if (!onclickMatch)
+    return "";
+  var onclick = onclickMatch[1];
+  var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
+  if (!pMatch || !pMatch[1])
+    return "";
+  var url = pMatch[1];
+  if (!/^https?:\/\//i.test(url))
+    url = baseUrl + url;
+  return url;
+}
+function findEpisodeInLinks(episodeLinks, episode) {
+  var epNum = parseInt(episode, 10);
+  for (var i = 0; i < episodeLinks.length; i++) {
+    var decoded = decodeURIComponent(episodeLinks[i]);
+    var numMatch = decoded.match(/-(\d+)(?:-[^/]*)?\/?$/);
+    if (numMatch && parseInt(numMatch[1], 10) === epNum)
+      return episodeLinks[i];
+  }
+  if (epNum >= 1 && epNum <= episodeLinks.length)
+    return episodeLinks[epNum - 1];
+  return "";
+}
+function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl, cacheId) {
   return __async(this, null, function* () {
+    var cacheKey = (cacheId || seasonsPageUrl) + "_s" + season;
+    if (_episodeCache[cacheKey]) {
+      console.log("[FaselHDX] Cache hit for " + cacheKey);
+      return findEpisodeInLinks(_episodeCache[cacheKey], episode);
+    }
     var html = yield fetchText(seasonsPageUrl, {
       headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: baseUrl + "/main" })
     });
@@ -226,20 +264,13 @@ function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl) {
     var seasonBlock = html.substring(startIdx, endIdx);
     var episodeLinks = extractEpisodeLinks(seasonBlock);
     if (episodeLinks.length === 0) {
-      var onclickMatch = divTags[seasonIdx].tag.match(/onclick="([^"]*)"/i);
-      var onclick = onclickMatch ? onclickMatch[1] : "";
-      if (onclick) {
-        var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
-        if (pMatch && pMatch[1]) {
-          var seasonUrl = pMatch[1];
-          if (!/^https?:\/\//i.test(seasonUrl))
-            seasonUrl = baseUrl + seasonUrl;
-          var sHtml = yield fetchText(seasonUrl, {
-            headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: seasonsPageUrl })
-          });
-          if (sHtml)
-            episodeLinks = extractEpisodeLinks(sHtml);
-        }
+      var seasonUrl = extractOnclickUrl(divTags[seasonIdx].tag, baseUrl);
+      if (seasonUrl) {
+        var sHtml = yield fetchText(seasonUrl, {
+          headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: seasonsPageUrl })
+        });
+        if (sHtml)
+          episodeLinks = extractEpisodeLinks(sHtml);
       }
     }
     if (episodeLinks.length === 0)
@@ -247,29 +278,25 @@ function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl) {
     episodeLinks = unique(episodeLinks);
     if (episodeLinks.length === 0)
       return "";
-    var epNum = parseInt(episode, 10);
-    var match = "";
-    for (var i = 0; i < episodeLinks.length; i++) {
-      var decoded = decodeURIComponent(episodeLinks[i]);
-      var numMatch = decoded.match(/-(\d+)(?:-[^/]*)?\/?$/);
-      if (numMatch && parseInt(numMatch[1], 10) === epNum) {
-        match = episodeLinks[i];
-        break;
-      }
-    }
-    if (!match && epNum >= 1 && epNum <= episodeLinks.length) {
-      match = episodeLinks[epNum - 1];
-    }
-    return match;
+    _episodeCache[cacheKey] = episodeLinks;
+    console.log("[FaselHDX] Cached " + episodeLinks.length + " episodes for " + cacheKey);
+    return findEpisodeInLinks(episodeLinks, episode);
   });
 }
 function resolvePageUrl(tmdbMeta, mediaType, season, episode, baseUrl) {
   return __async(this, null, function* () {
-    var candidates = yield searchCandidates(tmdbMeta.title, baseUrl);
-    if (candidates.length === 0 && tmdbMeta.year) {
-      candidates = yield searchCandidates(tmdbMeta.title + " " + tmdbMeta.year, baseUrl);
+    var searchKey = tmdbMeta.title + "_" + (tmdbMeta.year || "");
+    var candidates;
+    if (_searchCache[searchKey]) {
+      candidates = _searchCache[searchKey];
+    } else {
+      candidates = yield searchCandidates(tmdbMeta.title, baseUrl);
+      if (candidates.length === 0 && tmdbMeta.year) {
+        candidates = yield searchCandidates(tmdbMeta.title + " " + tmdbMeta.year, baseUrl);
+      }
+      candidates = unique(candidates);
+      _searchCache[searchKey] = candidates;
     }
-    candidates = unique(candidates);
     if (candidates.length === 0)
       return "";
     var ranked = candidates.map(function(url) {
@@ -279,7 +306,7 @@ function resolvePageUrl(tmdbMeta, mediaType, season, episode, baseUrl) {
     });
     var bestUrl = ranked[0] ? ranked[0].url : "";
     if (mediaType === "tv" && season && episode && bestUrl && /\/(seasons|anime)\//.test(bestUrl)) {
-      var episodeUrl = yield resolveEpisodeFromSeasons(bestUrl, season, episode, baseUrl);
+      var episodeUrl = yield resolveEpisodeFromSeasons(bestUrl, season, episode, baseUrl, tmdbMeta.title);
       if (episodeUrl)
         return episodeUrl;
     }
@@ -306,7 +333,7 @@ function executeQualityScript(scriptContent, baseUrl) {
   var lc = 0;
   scriptContent = scriptContent.replace(/while\s*\(\s*!!\s*\[\s*\]\s*\)\s*\{/g, function() {
     lc++;
-    return "var __lc" + lc + "=0;while(++__lc" + lc + "<1000){";
+    return "var __lc" + lc + "=0;while(++__lc" + lc + "<500){";
   });
   scriptContent = scriptContent.replace(/\bdebugger\b/g, "void 0");
   var mockDoc = {
