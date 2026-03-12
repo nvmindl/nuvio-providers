@@ -16,11 +16,53 @@ async function resolveTmdbMeta(tmdbId) {
     ]);
     var arData = results[0];
     var enData = results[1];
+    var year = '';
+    if (enData.first_air_date) year = enData.first_air_date.split('-')[0];
     return {
         arabicTitle: arData.name || '',
         englishTitle: enData.name || '',
         originalTitle: enData.original_name || '',
+        year: year,
     };
+}
+
+// ─── Turkish romanization & albaplayer slug builder ────────────────────────
+
+var TURKISH_MAP = {
+    '\u015f': 's', '\u015e': 's',  // ş Ş
+    '\u00fc': 'u', '\u00dc': 'u',  // ü Ü
+    '\u00f6': 'o', '\u00d6': 'o',  // ö Ö
+    '\u00e7': 'c', '\u00c7': 'c',  // ç Ç
+    '\u0131': 'i', '\u0130': 'i',  // ı İ
+    '\u011f': 'g', '\u011e': 'g',  // ğ Ğ
+};
+var TURKISH_RE = /[\u015f\u015e\u00fc\u00dc\u00f6\u00d6\u00e7\u00c7\u0131\u0130\u011f\u011e]/g;
+
+function romanizeToSlug(name) {
+    var romanized = name.replace(TURKISH_RE, function(c) { return TURKISH_MAP[c] || c; });
+    return romanized.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function buildAlbaSlugs(meta, season, episode) {
+    var ep = 's' + String(season).padStart(2, '0') + 'e' + String(episode).padStart(2, '0');
+    var seen = {};
+    var slugs = [];
+    function add(base) {
+        if (!base || seen[base]) return;
+        seen[base] = true;
+        if (meta.year) slugs.push(base + '-' + meta.year + '-' + ep);
+        slugs.push(base + '-' + ep);
+    }
+    // Try original name (before colon subtitle) first, then full, then english
+    if (meta.originalTitle) {
+        add(romanizeToSlug(meta.originalTitle.split(':')[0].trim()));
+        add(romanizeToSlug(meta.originalTitle));
+    }
+    if (meta.englishTitle) {
+        add(romanizeToSlug(meta.englishTitle.split(':')[0].trim()));
+        add(romanizeToSlug(meta.englishTitle));
+    }
+    return slugs;
 }
 
 // ─── URL construction ───────────────────────────────────────────────────────
@@ -400,27 +442,45 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     console.log('[Kirmzi] Resolving TMDB meta for ID ' + tmdbId);
     var meta = await resolveTmdbMeta(tmdbId);
-    if (!meta.arabicTitle) {
-        console.log('[Kirmzi] No Arabic title found');
+    if (!meta.arabicTitle && !meta.englishTitle && !meta.originalTitle) {
+        console.log('[Kirmzi] No title found from TMDB');
         return [];
     }
-    console.log('[Kirmzi] Arabic title: ' + meta.arabicTitle);
+    console.log('[Kirmzi] Titles: AR=' + meta.arabicTitle + ' EN=' + meta.englishTitle + ' ORIG=' + meta.originalTitle);
 
     // Construct the episode URL (direct slug approach)
-    var episodeUrl = buildEpisodeUrl(meta.arabicTitle, episode);
-    console.log('[Kirmzi] Episode URL: ' + episodeUrl);
+    var albaUrl = '';
+    if (meta.arabicTitle) {
+        var episodeUrl = buildEpisodeUrl(meta.arabicTitle, episode);
+        console.log('[Kirmzi] Episode URL: ' + episodeUrl);
 
-    // Fetch the episode page
-    var episodeHtml = await fetchText(episodeUrl);
-    var albaUrl = episodeHtml ? extractAlbaplayerUrl(episodeHtml) : '';
+        // Fetch the episode page
+        var episodeHtml = await fetchText(episodeUrl);
+        albaUrl = episodeHtml ? extractAlbaplayerUrl(episodeHtml) : '';
 
-    // If direct slug fails or has no player, fall back to site search
+        // If direct slug fails or has no player, fall back to site search
+        if (!albaUrl) {
+            console.log('[Kirmzi] Direct slug has no player, trying search...');
+            var searchedUrl = await searchForEpisode(meta, episode);
+            if (searchedUrl) {
+                episodeHtml = await fetchText(searchedUrl);
+                albaUrl = episodeHtml ? extractAlbaplayerUrl(episodeHtml) : '';
+            }
+        }
+    }
+
+    // If kirmzi site failed, try constructing albaplayer slug directly
     if (!albaUrl) {
-        console.log('[Kirmzi] Direct slug has no player, trying search...');
-        var searchedUrl = await searchForEpisode(meta, episode);
-        if (searchedUrl) {
-            episodeHtml = await fetchText(searchedUrl);
-            albaUrl = episodeHtml ? extractAlbaplayerUrl(episodeHtml) : '';
+        console.log('[Kirmzi] Kirmzi site failed, trying direct albaplayer slugs...');
+        var candidateSlugs = buildAlbaSlugs(meta, season, episode);
+        for (var si = 0; si < candidateSlugs.length; si++) {
+            var candidateUrl = ALBA_BASE + '/' + candidateSlugs[si] + '/';
+            console.log('[Kirmzi] Trying alba slug: ' + candidateSlugs[si]);
+            var directResult = await tryExtractFromAlba(candidateUrl);
+            if (directResult) {
+                console.log('[Kirmzi] Direct alba slug worked: ' + candidateSlugs[si]);
+                return buildStreams(directResult);
+            }
         }
     }
 
