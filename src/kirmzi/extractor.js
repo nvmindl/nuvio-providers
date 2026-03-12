@@ -1,4 +1,3 @@
-var cheerio = require('cheerio-without-node-native');
 import { HEADERS, fetchText, getBaseUrl } from './http.js';
 
 var TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
@@ -7,8 +6,7 @@ var ALBA_BASE = 'https://w.shadwo.pro/albaplayer';
 
 // ─── TMDB helpers ───────────────────────────────────────────────────────────
 
-async function resolveTmdbMeta(tmdbId, mediaType) {
-    // Get Arabic title
+async function resolveTmdbMeta(tmdbId) {
     var url = TMDB_API_BASE + '/tv/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=ar-SA';
     var response = await fetch(url, {
         method: 'GET',
@@ -16,18 +14,7 @@ async function resolveTmdbMeta(tmdbId, mediaType) {
     });
     if (!response.ok) throw new Error('TMDB ' + response.status);
     var data = await response.json();
-    var arabicTitle = data.name || '';
-
-    // Also get English details for year
-    var enUrl = TMDB_API_BASE + '/tv/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=en-US';
-    var enResp = await fetch(enUrl, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-    });
-    var enData = enResp.ok ? await enResp.json() : {};
-    var year = (enData.first_air_date || '').split('-')[0] || '';
-
-    return { arabicTitle: arabicTitle, year: year };
+    return { arabicTitle: data.name || '' };
 }
 
 // ─── URL construction ───────────────────────────────────────────────────────
@@ -154,51 +141,45 @@ function extractM3u8FromUnpacked(unpacked) {
     return fallback ? fallback[0] : '';
 }
 
-function extractQualityLabels(unpacked) {
-    // Look for qualityLabels in JWPlayer config
-    // Can be either qualityLabels:{...} or 'qualityLabels':{...}
-    var match = unpacked.match(/['"]?qualityLabels['"]?\s*:\s*\{([^}]+)\}/);
-    if (!match) return {};
-    var labels = {};
-    var re = /"(\d+)"\s*:\s*"([^"]+)"/g;
-    var m;
-    while ((m = re.exec(match[1])) !== null) {
-        labels[m[1]] = m[2];
-    }
-    return labels;
-}
-
 // ─── Try multiple embed servers ─────────────────────────────────────────────
 
 async function tryExtractFromAlba(albaUrl) {
-    // Fetch the albaplayer page (no Cloudflare, plain HTTP works)
     var html = await fetchText(albaUrl);
     if (!html) return null;
 
-    // Extract primary embed iframe
     var data = extractEmbedUrls(html);
     if (data.embedUrls.length === 0) return null;
 
-    // Try the primary embed (usually CDNPlus / serv=1)
+    // Try the primary embed first (usually CDNPlus / serv=1)
     for (var i = 0; i < data.embedUrls.length; i++) {
         var result = await tryExtractFromEmbed(data.embedUrls[i]);
         if (result) return result;
     }
 
-    // Try other servers if primary failed
-    // Only try servers that use .cyou domains (cdnplus, mp4plus, anafast, vidoba, vidspeed)
-    for (var j = 0; j < data.servers.length; j++) {
-        var servUrl = data.servers[j];
-        if (!/serv=[2-5]/.test(servUrl)) continue;
+    // Collect fallback server URLs in parallel instead of sequentially
+    var servUrls = data.servers.filter(function(s) { return /serv=[2-5]/.test(s); });
+    if (servUrls.length === 0) return null;
 
-        var servHtml = await fetchText(servUrl);
-        if (!servHtml) continue;
+    // Fetch all server pages in parallel
+    var servPages = await Promise.all(servUrls.map(function(s) { return fetchText(s); }));
 
-        var servEmbed = extractEmbedUrls(servHtml);
+    // Collect all embed URLs from server pages
+    var fallbackEmbeds = [];
+    for (var j = 0; j < servPages.length; j++) {
+        if (!servPages[j]) continue;
+        var servEmbed = extractEmbedUrls(servPages[j]);
         for (var k = 0; k < servEmbed.embedUrls.length; k++) {
-            var servResult = await tryExtractFromEmbed(servEmbed.embedUrls[k]);
-            if (servResult) return servResult;
+            fallbackEmbeds.push(servEmbed.embedUrls[k]);
         }
+    }
+    if (fallbackEmbeds.length === 0) return null;
+
+    // Race all fallback embeds — first one with a valid m3u8 wins
+    var embedResults = await Promise.all(fallbackEmbeds.map(function(u) {
+        return tryExtractFromEmbed(u).catch(function() { return null; });
+    }));
+    for (var m = 0; m < embedResults.length; m++) {
+        if (embedResults[m]) return embedResults[m];
     }
 
     return null;
@@ -233,9 +214,7 @@ async function tryExtractFromEmbed(embedUrl) {
     var m3u8 = extractM3u8FromUnpacked(unpacked);
     if (!m3u8) return null;
 
-    var labels = extractQualityLabels(unpacked);
-
-    return { m3u8: m3u8, labels: labels, embedUrl: embedUrl };
+    return { m3u8: m3u8, embedUrl: embedUrl };
 }
 
 // ─── Build streams ──────────────────────────────────────────────────────────
@@ -331,7 +310,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     if (!episode) return [];
 
     console.log('[Kirmzi] Resolving TMDB meta for ID ' + tmdbId);
-    var meta = await resolveTmdbMeta(tmdbId, mediaType);
+    var meta = await resolveTmdbMeta(tmdbId);
     if (!meta.arabicTitle) {
         console.log('[Kirmzi] No Arabic title found');
         return [];

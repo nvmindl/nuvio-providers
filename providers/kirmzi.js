@@ -1,6 +1,6 @@
 /**
  * kirmzi - Built from src/kirmzi/
- * Generated: 2026-03-12T04:10:28.986Z
+ * Generated: 2026-03-12T04:20:41.771Z
  */
 var __defProp = Object.defineProperty;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -85,11 +85,10 @@ function fetchText(url, options) {
 }
 
 // src/kirmzi/extractor.js
-var cheerio = require("cheerio-without-node-native");
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_API_BASE = "https://api.themoviedb.org/3";
 var ALBA_BASE = "https://w.shadwo.pro/albaplayer";
-function resolveTmdbMeta(tmdbId, mediaType) {
+function resolveTmdbMeta(tmdbId) {
   return __async(this, null, function* () {
     var url = TMDB_API_BASE + "/tv/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=ar-SA";
     var response = yield fetch(url, {
@@ -99,15 +98,7 @@ function resolveTmdbMeta(tmdbId, mediaType) {
     if (!response.ok)
       throw new Error("TMDB " + response.status);
     var data = yield response.json();
-    var arabicTitle = data.name || "";
-    var enUrl = TMDB_API_BASE + "/tv/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=en-US";
-    var enResp = yield fetch(enUrl, {
-      method: "GET",
-      headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
-    });
-    var enData = enResp.ok ? yield enResp.json() : {};
-    var year = (enData.first_air_date || "").split("-")[0] || "";
-    return { arabicTitle, year };
+    return { arabicTitle: data.name || "" };
   });
 }
 function buildEpisodeSlug(arabicTitle, episode) {
@@ -180,18 +171,6 @@ function extractM3u8FromUnpacked(unpacked) {
   var fallback = unpacked.match(/https?:\/\/[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?/);
   return fallback ? fallback[0] : "";
 }
-function extractQualityLabels(unpacked) {
-  var match = unpacked.match(/['"]?qualityLabels['"]?\s*:\s*\{([^}]+)\}/);
-  if (!match)
-    return {};
-  var labels = {};
-  var re = /"(\d+)"\s*:\s*"([^"]+)"/g;
-  var m;
-  while ((m = re.exec(match[1])) !== null) {
-    labels[m[1]] = m[2];
-  }
-  return labels;
-}
 function tryExtractFromAlba(albaUrl) {
   return __async(this, null, function* () {
     var html = yield fetchText(albaUrl);
@@ -205,19 +184,33 @@ function tryExtractFromAlba(albaUrl) {
       if (result)
         return result;
     }
-    for (var j = 0; j < data.servers.length; j++) {
-      var servUrl = data.servers[j];
-      if (!/serv=[2-5]/.test(servUrl))
+    var servUrls = data.servers.filter(function(s) {
+      return /serv=[2-5]/.test(s);
+    });
+    if (servUrls.length === 0)
+      return null;
+    var servPages = yield Promise.all(servUrls.map(function(s) {
+      return fetchText(s);
+    }));
+    var fallbackEmbeds = [];
+    for (var j = 0; j < servPages.length; j++) {
+      if (!servPages[j])
         continue;
-      var servHtml = yield fetchText(servUrl);
-      if (!servHtml)
-        continue;
-      var servEmbed = extractEmbedUrls(servHtml);
+      var servEmbed = extractEmbedUrls(servPages[j]);
       for (var k = 0; k < servEmbed.embedUrls.length; k++) {
-        var servResult = yield tryExtractFromEmbed(servEmbed.embedUrls[k]);
-        if (servResult)
-          return servResult;
+        fallbackEmbeds.push(servEmbed.embedUrls[k]);
       }
+    }
+    if (fallbackEmbeds.length === 0)
+      return null;
+    var embedResults = yield Promise.all(fallbackEmbeds.map(function(u) {
+      return tryExtractFromEmbed(u).catch(function() {
+        return null;
+      });
+    }));
+    for (var m = 0; m < embedResults.length; m++) {
+      if (embedResults[m])
+        return embedResults[m];
     }
     return null;
   });
@@ -252,8 +245,7 @@ function tryExtractFromEmbed(embedUrl) {
     var m3u8 = extractM3u8FromUnpacked(unpacked);
     if (!m3u8)
       return null;
-    var labels = extractQualityLabels(unpacked);
-    return { m3u8, labels, embedUrl };
+    return { m3u8, embedUrl };
   });
 }
 var SUFFIX_QUALITY = { x: "1080p", h: "720p", n: "480p", l: "360p" };
@@ -334,7 +326,7 @@ function extractStreams(tmdbId, mediaType, season, episode) {
     if (!episode)
       return [];
     console.log("[Kirmzi] Resolving TMDB meta for ID " + tmdbId);
-    var meta = yield resolveTmdbMeta(tmdbId, mediaType);
+    var meta = yield resolveTmdbMeta(tmdbId);
     if (!meta.arabicTitle) {
       console.log("[Kirmzi] No Arabic title found");
       return [];
