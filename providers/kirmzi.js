@@ -1,6 +1,6 @@
 /**
  * kirmzi - Built from src/kirmzi/
- * Generated: 2026-03-12T04:05:37.937Z
+ * Generated: 2026-03-12T04:10:28.986Z
  */
 var __defProp = Object.defineProperty;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -256,47 +256,30 @@ function tryExtractFromEmbed(embedUrl) {
     return { m3u8, labels, embedUrl };
   });
 }
-function resolutionToLabel(res) {
-  if (!res)
-    return "auto";
-  var h = parseInt(res.split("x")[1], 10) || 0;
-  if (h >= 1080)
-    return "1080p";
-  if (h >= 720)
-    return "720p";
-  if (h >= 480)
-    return "480p";
-  if (h >= 360)
-    return "360p";
-  return h ? h + "p" : "auto";
-}
-function parseMasterPlaylist(m3u8Text) {
+var SUFFIX_QUALITY = { x: "1080p", h: "720p", n: "480p", l: "360p" };
+var QUALITY_ORDER = { "1080p": 0, "720p": 1, "480p": 2, "360p": 3 };
+function deriveVariantUrls(masterUrl) {
+  var m = masterUrl.match(/^(.+_),([a-zA-Z]+(?:,[a-zA-Z]+)*),\.urlset\/master\.m3u8(\?.+)?$/);
+  if (!m)
+    return [];
+  var base = m[1];
+  var suffixes = m[2].split(",");
+  var query = m[3] || "";
   var variants = [];
-  var lines = m3u8Text.split("\n");
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i].trim();
-    if (line.indexOf("#EXT-X-STREAM-INF") !== 0)
+  for (var i = 0; i < suffixes.length; i++) {
+    var s = suffixes[i];
+    var quality = SUFFIX_QUALITY[s] || null;
+    if (!quality)
       continue;
-    var resMatch = line.match(/RESOLUTION=([0-9]+x[0-9]+)/);
-    var bwMatch = line.match(/BANDWIDTH=(\d+)/);
-    var url = "";
-    for (var j = i + 1; j < lines.length; j++) {
-      var next = lines[j].trim();
-      if (next && next[0] !== "#") {
-        url = next;
-        break;
-      }
-    }
-    if (url) {
-      variants.push({
-        url,
-        resolution: resMatch ? resMatch[1] : "",
-        bandwidth: bwMatch ? parseInt(bwMatch[1], 10) : 0
-      });
-    }
+    variants.push({
+      url: base + s + "/index-v1-a1.m3u8" + query,
+      quality
+    });
   }
   variants.sort(function(a, b) {
-    return b.bandwidth - a.bandwidth;
+    var oa = QUALITY_ORDER[a.quality] !== void 0 ? QUALITY_ORDER[a.quality] : 99;
+    var ob = QUALITY_ORDER[b.quality] !== void 0 ? QUALITY_ORDER[b.quality] : 99;
+    return oa - ob;
   });
   return variants;
 }
@@ -314,44 +297,31 @@ function buildStreamHeaders(embedUrl) {
   };
 }
 function buildStreams(result) {
-  return __async(this, null, function* () {
-    if (!result || !result.m3u8)
-      return [];
-    var headers = buildStreamHeaders(result.embedUrl);
-    var masterText = yield fetchText(result.m3u8, { headers });
-    if (!masterText || masterText.indexOf("#EXTM3U") !== 0) {
-      return [{
-        name: "Kirmzi - Auto",
-        title: "Auto",
-        url: result.m3u8,
-        quality: "auto",
-        headers
-      }];
-    }
-    var variants = parseMasterPlaylist(masterText);
-    if (variants.length === 0) {
-      return [{
-        name: "Kirmzi - Auto",
-        title: "Auto",
-        url: result.m3u8,
-        quality: "auto",
-        headers
-      }];
-    }
+  if (!result || !result.m3u8)
+    return [];
+  var headers = buildStreamHeaders(result.embedUrl);
+  var variants = deriveVariantUrls(result.m3u8);
+  if (variants.length > 0) {
     var streams = [];
     for (var i = 0; i < variants.length; i++) {
       var v = variants[i];
-      var quality = resolutionToLabel(v.resolution);
       streams.push({
-        name: "Kirmzi - " + quality,
-        title: quality,
+        name: "Kirmzi - " + v.quality,
+        title: v.quality,
         url: v.url,
-        quality,
+        quality: v.quality,
         headers
       });
     }
     return streams;
-  });
+  }
+  return [{
+    name: "Kirmzi - Auto",
+    title: "Auto",
+    url: result.m3u8,
+    quality: "auto",
+    headers
+  }];
 }
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
@@ -389,7 +359,7 @@ function extractStreams(tmdbId, mediaType, season, episode) {
       return [];
     }
     console.log("[Kirmzi] Found m3u8: " + result.m3u8.substring(0, 80) + "...");
-    return yield buildStreams(result);
+    return buildStreams(result);
   });
 }
 
