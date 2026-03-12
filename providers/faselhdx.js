@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-11T16:50:54.055Z
+ * Generated: 2026-03-12T04:27:11.828Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -113,7 +113,6 @@ function fetchText(url, options) {
 }
 
 // src/faselhdx/extractor.js
-var cheerio = require("cheerio-without-node-native");
 function cleanText(value) {
   return String(value || "").toLowerCase().replace(/&[^;]+;/g, " ").replace(/[^a-z0-9\s\u0600-\u06FF\u0400-\u04FF\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF]/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -200,43 +199,51 @@ function scoreCandidate(url, mediaType, season, episode, title, year) {
   }
   return score;
 }
+function extractEpisodeLinks(html) {
+  var links = [];
+  var re = /href="([^"]*\/(?:episodes|anime-episodes)\/[^"]*)"/gi;
+  var m;
+  while ((m = re.exec(html)) !== null)
+    links.push(m[1]);
+  return links;
+}
 function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl) {
   return __async(this, null, function* () {
     var html = yield fetchText(seasonsPageUrl, {
       headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: baseUrl + "/main" })
     });
-    var $ = cheerio.load(html);
-    var seasonDivs = $(".seasonDiv");
-    if (seasonDivs.length === 0)
+    var divRe = /<div[^>]*class="[^"]*\bseasonDiv\b[^"]*"[^>]*>/gi;
+    var divTags = [];
+    var dm;
+    while ((dm = divRe.exec(html)) !== null) {
+      divTags.push({ index: dm.index, tag: dm[0] });
+    }
+    if (divTags.length === 0)
       return "";
-    var seasonIdx = Math.max(0, Math.min(parseInt(season, 10) - 1, seasonDivs.length - 1));
-    var targetDiv = seasonDivs.eq(seasonIdx);
-    var onclick = targetDiv.attr("onclick") || "";
-    var episodeLinks = [];
-    targetDiv.find('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
-      episodeLinks.push($(el).attr("href"));
-    });
-    if (episodeLinks.length === 0 && onclick) {
-      var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
-      if (pMatch && pMatch[1]) {
-        var seasonUrl = pMatch[1];
-        if (!/^https?:\/\//i.test(seasonUrl)) {
-          seasonUrl = baseUrl + seasonUrl;
+    var seasonIdx = Math.max(0, Math.min(parseInt(season, 10) - 1, divTags.length - 1));
+    var startIdx = divTags[seasonIdx].index;
+    var endIdx = seasonIdx + 1 < divTags.length ? divTags[seasonIdx + 1].index : html.length;
+    var seasonBlock = html.substring(startIdx, endIdx);
+    var episodeLinks = extractEpisodeLinks(seasonBlock);
+    if (episodeLinks.length === 0) {
+      var onclickMatch = divTags[seasonIdx].tag.match(/onclick="([^"]*)"/i);
+      var onclick = onclickMatch ? onclickMatch[1] : "";
+      if (onclick) {
+        var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
+        if (pMatch && pMatch[1]) {
+          var seasonUrl = pMatch[1];
+          if (!/^https?:\/\//i.test(seasonUrl))
+            seasonUrl = baseUrl + seasonUrl;
+          var sHtml = yield fetchText(seasonUrl, {
+            headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: seasonsPageUrl })
+          });
+          if (sHtml)
+            episodeLinks = extractEpisodeLinks(sHtml);
         }
-        var sHtml = yield fetchText(seasonUrl, {
-          headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: seasonsPageUrl })
-        });
-        var $s = cheerio.load(sHtml);
-        $s('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
-          episodeLinks.push($s(el).attr("href"));
-        });
       }
     }
-    if (episodeLinks.length === 0) {
-      $('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
-        episodeLinks.push($(el).attr("href"));
-      });
-    }
+    if (episodeLinks.length === 0)
+      episodeLinks = extractEpisodeLinks(html);
     episodeLinks = unique(episodeLinks);
     if (episodeLinks.length === 0)
       return "";
@@ -256,11 +263,8 @@ function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl) {
     return match;
   });
 }
-function resolvePageUrl(tmdbId, mediaType, season, episode, baseUrl) {
+function resolvePageUrl(tmdbMeta, mediaType, season, episode, baseUrl) {
   return __async(this, null, function* () {
-    if (typeof tmdbId === "string" && /^https?:\/\//i.test(tmdbId))
-      return tmdbId;
-    var tmdbMeta = yield resolveTmdbMeta(tmdbId, mediaType);
     var candidates = yield searchCandidates(tmdbMeta.title, baseUrl);
     if (candidates.length === 0 && tmdbMeta.year) {
       candidates = yield searchCandidates(tmdbMeta.title + " " + tmdbMeta.year, baseUrl);
@@ -282,22 +286,15 @@ function resolvePageUrl(tmdbId, mediaType, season, episode, baseUrl) {
     return bestUrl;
   });
 }
-function extractPlayerUrls($) {
+function extractPlayerUrls(html) {
   var urls = [];
-  $("ul.tabs-ul li").each(function(_, li) {
-    var onclick = $(li).attr("onclick") || "";
-    var match = onclick.match(/'(https?:\/\/[^']+\/video_player\?player_token=[^']+)'/i);
-    if (match && match[1])
-      urls.push(match[1]);
-  });
-  var iframeUrl = $('iframe[name="player_iframe"]').attr("data-src") || $('iframe[name="player_iframe"]').attr("src");
-  if (iframeUrl && /video_player\?player_token=/i.test(iframeUrl))
-    urls.push(iframeUrl);
-  $('iframe[data-src*="video_player"]').each(function(_, el) {
-    var ds = $(el).attr("data-src");
-    if (ds)
-      urls.push(ds);
-  });
+  var re1 = /'(https?:\/\/[^']+\/video_player\?player_token=[^']+)'/gi;
+  var m;
+  while ((m = re1.exec(html)) !== null)
+    urls.push(m[1]);
+  var re2 = /<iframe[^>]*(?:data-src|src)="(https?:\/\/[^"]*video_player\?player_token=[^"]*)"/gi;
+  while ((m = re2.exec(html)) !== null)
+    urls.push(m[1]);
   return unique(urls);
 }
 function executeQualityScript(scriptContent, baseUrl) {
@@ -566,15 +563,25 @@ function buildStreams(directStreams) {
 }
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
-    var baseUrl = yield resolveBaseUrl();
-    var pageUrl = yield resolvePageUrl(tmdbId, mediaType, season, episode, baseUrl);
+    if (typeof tmdbId === "string" && /^https?:\/\//i.test(tmdbId)) {
+      var baseUrl = yield resolveBaseUrl();
+      return yield extractFromPage(tmdbId, baseUrl);
+    }
+    var parallel = yield Promise.all([resolveBaseUrl(), resolveTmdbMeta(tmdbId, mediaType)]);
+    var baseUrl = parallel[0];
+    var tmdbMeta = parallel[1];
+    var pageUrl = yield resolvePageUrl(tmdbMeta, mediaType, season, episode, baseUrl);
     if (!pageUrl)
       return [];
+    return yield extractFromPage(pageUrl, baseUrl);
+  });
+}
+function extractFromPage(pageUrl, baseUrl) {
+  return __async(this, null, function* () {
     var html = yield fetchText(pageUrl, {
       headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: baseUrl + "/main" })
     });
-    var $ = cheerio.load(html);
-    var playerUrls = extractPlayerUrls($);
+    var playerUrls = extractPlayerUrls(html);
     var allStreams = [];
     for (var i = 0; i < playerUrls.length; i++) {
       var streams = yield resolveDirectFromPlayer(playerUrls[i], pageUrl, baseUrl);

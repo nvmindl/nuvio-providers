@@ -1,4 +1,3 @@
-var cheerio = require('cheerio-without-node-native');
 import { HEADERS, fetchText, resolveBaseUrl } from './http.js';
 
 function cleanText(value) {
@@ -83,46 +82,54 @@ function scoreCandidate(url, mediaType, season, episode, title, year) {
     return score;
 }
 
+function extractEpisodeLinks(html) {
+    var links = [];
+    var re = /href="([^"]*\/(?:episodes|anime-episodes)\/[^"]*)"/gi;
+    var m;
+    while ((m = re.exec(html)) !== null) links.push(m[1]);
+    return links;
+}
+
 async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl) {
     var html = await fetchText(seasonsPageUrl, {
         headers: { ...HEADERS, Referer: baseUrl + '/main' },
     });
-    var $ = cheerio.load(html);
 
-    var seasonDivs = $('.seasonDiv');
-    if (seasonDivs.length === 0) return '';
+    // Find all seasonDiv opening tags and their positions
+    var divRe = /<div[^>]*class="[^"]*\bseasonDiv\b[^"]*"[^>]*>/gi;
+    var divTags = [];
+    var dm;
+    while ((dm = divRe.exec(html)) !== null) {
+        divTags.push({ index: dm.index, tag: dm[0] });
+    }
+    if (divTags.length === 0) return '';
 
-    var seasonIdx = Math.max(0, Math.min(parseInt(season, 10) - 1, seasonDivs.length - 1));
-    var targetDiv = seasonDivs.eq(seasonIdx);
-    var onclick = targetDiv.attr('onclick') || '';
+    var seasonIdx = Math.max(0, Math.min(parseInt(season, 10) - 1, divTags.length - 1));
+    var startIdx = divTags[seasonIdx].index;
+    var endIdx = seasonIdx + 1 < divTags.length ? divTags[seasonIdx + 1].index : html.length;
+    var seasonBlock = html.substring(startIdx, endIdx);
 
-    var episodeLinks = [];
-    targetDiv.find('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
-        episodeLinks.push($(el).attr('href'));
-    });
+    var episodeLinks = extractEpisodeLinks(seasonBlock);
 
-    if (episodeLinks.length === 0 && onclick) {
-        var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
-        if (pMatch && pMatch[1]) {
-            var seasonUrl = pMatch[1];
-            if (!/^https?:\/\//i.test(seasonUrl)) {
-                seasonUrl = baseUrl + seasonUrl;
+    if (episodeLinks.length === 0) {
+        // Check onclick for a season page URL
+        var onclickMatch = divTags[seasonIdx].tag.match(/onclick="([^"]*)"/i);
+        var onclick = onclickMatch ? onclickMatch[1] : '';
+        if (onclick) {
+            var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
+            if (pMatch && pMatch[1]) {
+                var seasonUrl = pMatch[1];
+                if (!/^https?:\/\//i.test(seasonUrl)) seasonUrl = baseUrl + seasonUrl;
+                var sHtml = await fetchText(seasonUrl, {
+                    headers: { ...HEADERS, Referer: seasonsPageUrl },
+                });
+                if (sHtml) episodeLinks = extractEpisodeLinks(sHtml);
             }
-            var sHtml = await fetchText(seasonUrl, {
-                headers: { ...HEADERS, Referer: seasonsPageUrl },
-            });
-            var $s = cheerio.load(sHtml);
-            $s('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
-                episodeLinks.push($s(el).attr('href'));
-            });
         }
     }
 
-    if (episodeLinks.length === 0) {
-        $('a[href*="/episodes/"], a[href*="/anime-episodes/"]').each(function(_, el) {
-            episodeLinks.push($(el).attr('href'));
-        });
-    }
+    // Fallback: all episode links on page
+    if (episodeLinks.length === 0) episodeLinks = extractEpisodeLinks(html);
 
     episodeLinks = unique(episodeLinks);
     if (episodeLinks.length === 0) return '';
@@ -143,11 +150,7 @@ async function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUr
     return match;
 }
 
-async function resolvePageUrl(tmdbId, mediaType, season, episode, baseUrl) {
-    if (typeof tmdbId === 'string' && /^https?:\/\//i.test(tmdbId)) return tmdbId;
-
-    var tmdbMeta = await resolveTmdbMeta(tmdbId, mediaType);
-
+async function resolvePageUrl(tmdbMeta, mediaType, season, episode, baseUrl) {
     // Search title only first (faster); fall back to title+year if no results
     var candidates = await searchCandidates(tmdbMeta.title, baseUrl);
     if (candidates.length === 0 && tmdbMeta.year) {
@@ -173,20 +176,15 @@ async function resolvePageUrl(tmdbId, mediaType, season, episode, baseUrl) {
     return bestUrl;
 }
 
-function extractPlayerUrls($) {
+function extractPlayerUrls(html) {
     var urls = [];
-    $('ul.tabs-ul li').each(function(_, li) {
-        var onclick = $(li).attr('onclick') || '';
-        var match = onclick.match(/'(https?:\/\/[^']+\/video_player\?player_token=[^']+)'/i);
-        if (match && match[1]) urls.push(match[1]);
-    });
-    var iframeUrl = $('iframe[name="player_iframe"]').attr('data-src')
-        || $('iframe[name="player_iframe"]').attr('src');
-    if (iframeUrl && /video_player\?player_token=/i.test(iframeUrl)) urls.push(iframeUrl);
-    $('iframe[data-src*="video_player"]').each(function(_, el) {
-        var ds = $(el).attr('data-src');
-        if (ds) urls.push(ds);
-    });
+    // onclick attributes with player URLs
+    var re1 = /'(https?:\/\/[^']+\/video_player\?player_token=[^']+)'/gi;
+    var m;
+    while ((m = re1.exec(html)) !== null) urls.push(m[1]);
+    // iframe data-src or src with video_player
+    var re2 = /<iframe[^>]*(?:data-src|src)="(https?:\/\/[^"]*video_player\?player_token=[^"]*)"/gi;
+    while ((m = re2.exec(html)) !== null) urls.push(m[1]);
     return unique(urls);
 }
 
@@ -383,17 +381,28 @@ function buildStreams(directStreams) {
 }
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    var baseUrl = await resolveBaseUrl();
+    if (typeof tmdbId === 'string' && /^https?:\/\//i.test(tmdbId)) {
+        var baseUrl = await resolveBaseUrl();
+        return await extractFromPage(tmdbId, baseUrl);
+    }
 
-    var pageUrl = await resolvePageUrl(tmdbId, mediaType, season, episode, baseUrl);
+    // Parallelize domain resolution and TMDB lookup
+    var parallel = await Promise.all([resolveBaseUrl(), resolveTmdbMeta(tmdbId, mediaType)]);
+    var baseUrl = parallel[0];
+    var tmdbMeta = parallel[1];
+
+    var pageUrl = await resolvePageUrl(tmdbMeta, mediaType, season, episode, baseUrl);
     if (!pageUrl) return [];
 
+    return await extractFromPage(pageUrl, baseUrl);
+}
+
+async function extractFromPage(pageUrl, baseUrl) {
     var html = await fetchText(pageUrl, {
         headers: { ...HEADERS, Referer: baseUrl + '/main' },
     });
 
-    var $ = cheerio.load(html);
-    var playerUrls = extractPlayerUrls($);
+    var playerUrls = extractPlayerUrls(html);
 
     var allStreams = [];
     for (var i = 0; i < playerUrls.length; i++) {
