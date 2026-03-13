@@ -63,8 +63,8 @@ function resolveId(tmdbId, type) {
 }
 
 // src/faselhdx/extractor.js
-var PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|vidtube\.pro/i;
-var BLOCKED_HOST_RE = /fasel-hd\.cam|faselhd\.cam|faselhd\.center|egybestvid\.com/i;
+var PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|vidtube\.one|vidtube\.pro|1vid\.xyz/i;
+var BLOCKED_HOST_RE = /fasel-hd\.cam|faselhd\.cam|faselhd\.center|egybestvid\.com|vidspeed|uqload|dw\.uns/i;
 function sortVideos(videos) {
   var preferred = [];
   var others = [];
