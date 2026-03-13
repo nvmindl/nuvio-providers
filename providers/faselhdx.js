@@ -1,26 +1,7 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-13T11:19:57.291Z
+ * Generated: 2026-03-13T11:28:49.257Z
  */
-var __defProp = Object.defineProperty;
-var __defProps = Object.defineProperties;
-var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
-var __getOwnPropSymbols = Object.getOwnPropertySymbols;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __propIsEnum = Object.prototype.propertyIsEnumerable;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __spreadValues = (a, b) => {
-  for (var prop in b || (b = {}))
-    if (__hasOwnProp.call(b, prop))
-      __defNormalProp(a, prop, b[prop]);
-  if (__getOwnPropSymbols)
-    for (var prop of __getOwnPropSymbols(b)) {
-      if (__propIsEnum.call(b, prop))
-        __defNormalProp(a, prop, b[prop]);
-    }
-  return a;
-};
-var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
     var fulfilled = (value) => {
@@ -43,638 +24,314 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/faselhdx/http.js
-var PRIMARY_URL = "https://www.faselhds.biz";
-var CANONICAL_URLS = ["https://www.faselhd.club", "https://www.fasel-hd.cam"];
-var LEGACY_DOMAIN_RE = /^(https?:\/\/web\d+x\.faselhdx\.\w+)/i;
-var _resolvedBase = "";
+var BASE = "https://www.faselhds.biz";
 var HEADERS = {
   "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.8"
 };
-function resolveBaseUrl() {
+function getBaseUrl() {
+  return BASE;
+}
+function fetchText(url, extra) {
   return __async(this, null, function* () {
-    if (_resolvedBase)
-      return _resolvedBase;
-    try {
-      var pr = yield fetch(PRIMARY_URL + "/", {
-        method: "HEAD",
-        redirect: "follow",
-        headers: HEADERS,
-        signal: AbortSignal.timeout(1e4)
-      });
-      if (pr.status < 500) {
-        _resolvedBase = PRIMARY_URL;
-        console.log("[FaselHDX] Using primary domain: " + _resolvedBase);
-        return _resolvedBase;
-      }
-    } catch (e) {
-      console.log("[FaselHDX] Primary domain unreachable: " + (e.cause && e.cause.code || e.message));
-    }
-    for (var c = 0; c < CANONICAL_URLS.length; c++) {
-      try {
-        var url = CANONICAL_URLS[c];
-        for (var i = 0; i < 5; i++) {
-          var m = url.match(LEGACY_DOMAIN_RE);
-          if (m) {
-            _resolvedBase = m[1];
-            break;
-          }
-          var resp = yield fetch(url, {
-            method: "HEAD",
-            redirect: "manual",
-            headers: HEADERS,
-            signal: AbortSignal.timeout(8e3)
-          });
-          var location = resp.headers.get("location");
-          if (location) {
-            url = location;
-            continue;
-          }
-          var mf = (resp.url || "").match(LEGACY_DOMAIN_RE);
-          if (mf) {
-            _resolvedBase = mf[1];
-            break;
-          }
-          break;
-        }
-        if (!_resolvedBase) {
-          var ml = url.match(LEGACY_DOMAIN_RE);
-          if (ml)
-            _resolvedBase = ml[1];
-        }
-        if (_resolvedBase) {
-          console.log("[FaselHDX] Resolved via redirect: " + _resolvedBase);
-          return _resolvedBase;
-        }
-      } catch (e) {
-        console.log("[FaselHDX] Redirect resolve error (" + CANONICAL_URLS[c] + "): " + e.message);
-      }
-    }
-    _resolvedBase = PRIMARY_URL;
-    console.log("[FaselHDX] Using fallback domain: " + _resolvedBase);
-    return _resolvedBase;
+    var h = Object.assign({}, HEADERS, extra || {});
+    var r = yield fetch(url, { headers: h, redirect: "follow", signal: AbortSignal.timeout(12e3) });
+    if (!r.ok)
+      throw new Error("HTTP " + r.status);
+    return r.text();
   });
 }
-function fetchText(url, options) {
+function fetchPost(url, body, extra) {
   return __async(this, null, function* () {
-    options = options || {};
-    var fetchOpts = {
-      redirect: "follow",
-      headers: __spreadValues(__spreadValues({}, HEADERS), options.headers || {})
-    };
-    try {
-      fetchOpts.signal = AbortSignal.timeout(15e3);
-    } catch (e) {
-    }
-    var response = yield fetch(url, fetchOpts);
-    if (!response.ok) {
-      throw new Error("HTTP " + response.status + " for " + url);
-    }
-    var text = yield response.text();
-    if (text.includes("Just a moment") && text.includes("challenge-platform")) {
-      throw new Error("CF challenge for " + url);
-    }
-    return text;
+    var h = Object.assign({}, HEADERS, {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest"
+    }, extra || {});
+    var r = yield fetch(url, { method: "POST", headers: h, body, redirect: "follow", signal: AbortSignal.timeout(12e3) });
+    if (!r.ok)
+      throw new Error("HTTP " + r.status);
+    return r.text();
   });
 }
 
 // src/faselhdx/extractor.js
-function cleanText(value) {
-  return String(value || "").toLowerCase().replace(/&[^;]+;/g, " ").replace(/[^a-z0-9\s\u0600-\u06FF\u0400-\u04FF\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF]/g, " ").replace(/\s+/g, " ").trim();
-}
-function unique(values) {
-  return Array.from(new Set(values.filter(Boolean)));
-}
-var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
-var TMDB_API_BASE = "https://api.themoviedb.org/3";
-var _episodeCache = {};
-var _tmdbCache = {};
-var _searchCache = {};
-function resolveTmdbMeta(tmdbId, mediaType) {
+var TMDB_KEY = "439c478a771f35c05022f9feabcca01c";
+var TMDB = "https://api.themoviedb.org/3";
+var _cache = {};
+function tmdbTitle(tmdbId, mediaType) {
   return __async(this, null, function* () {
-    var cacheKey = tmdbId + "_" + mediaType;
-    if (_tmdbCache[cacheKey])
-      return _tmdbCache[cacheKey];
-    var endpoint = mediaType === "movie" ? "movie" : "tv";
-    var url = TMDB_API_BASE + "/" + endpoint + "/" + tmdbId + "?api_key=" + TMDB_API_KEY;
-    var response = yield fetch(url, {
-      method: "GET",
-      headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
+    var k = tmdbId + mediaType;
+    if (_cache[k])
+      return _cache[k];
+    var path = mediaType === "movie" ? "movie" : "tv";
+    var r = yield fetch(TMDB + "/" + path + "/" + tmdbId + "?api_key=" + TMDB_KEY, {
+      headers: { "Accept": "application/json" },
+      signal: AbortSignal.timeout(8e3)
     });
-    if (!response.ok)
-      throw new Error("TMDB " + response.status);
-    var data = yield response.json();
-    var title = mediaType === "tv" ? data.name || "" : data.title || "";
-    var releaseDate = mediaType === "tv" ? data.first_air_date || "" : data.release_date || "";
-    var year = releaseDate ? releaseDate.split("-")[0] : "";
-    var result = { title: cleanText(title), year };
-    _tmdbCache[cacheKey] = result;
-    return result;
+    if (!r.ok)
+      throw new Error("TMDB " + r.status);
+    var d = yield r.json();
+    var title = mediaType === "tv" ? d.name || "" : d.title || "";
+    var year = (mediaType === "tv" ? d.first_air_date : d.release_date || "").split("-")[0] || "";
+    var res = { title, year };
+    _cache[k] = res;
+    return res;
   });
 }
-var CONTENT_PATH_RE = /href="(https?:\/\/[^"]+\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\/[^"]+)"/gi;
-function extractSearchUrls(html) {
-  var urls = [];
-  var m;
-  CONTENT_PATH_RE.lastIndex = 0;
-  while ((m = CONTENT_PATH_RE.exec(html)) !== null) {
-    if (m[1])
-      urls.push(m[1]);
-  }
-  return unique(urls);
-}
-function searchCandidates(query, baseUrl) {
-  return __async(this, null, function* () {
-    if (!query)
-      return [];
-    var html = "";
-    try {
-      var ajaxUrl = baseUrl + "/wp-admin/admin-ajax.php";
-      var response = yield fetch(ajaxUrl, {
-        method: "POST",
-        headers: __spreadProps(__spreadValues({}, HEADERS), {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "X-Requested-With": "XMLHttpRequest",
-          Referer: baseUrl + "/"
-        }),
-        body: "action=dtc_live&trsearch=" + encodeURIComponent(query),
-        signal: AbortSignal.timeout(12e3)
-      });
-      if (response.ok)
-        html = yield response.text();
-    } catch (e) {
-      console.log("[FaselHDX] AJAX search failed: " + e.message);
-    }
-    var results = extractSearchUrls(html);
-    if (results.length > 0)
-      return results;
-    try {
-      var searchUrl = baseUrl + "/?s=" + encodeURIComponent(query);
-      var resp2 = yield fetch(searchUrl, {
-        headers: HEADERS,
-        signal: AbortSignal.timeout(12e3)
-      });
-      if (resp2.ok) {
-        html = yield resp2.text();
-        results = extractSearchUrls(html);
-      }
-    } catch (e) {
-      console.log("[FaselHDX] Standard search failed: " + e.message);
-    }
-    return results;
-  });
-}
-function scoreCandidate(url, mediaType, season, episode, title, year) {
-  var lower = url.toLowerCase();
-  var score = 0;
-  if (mediaType === "movie" && /(\/movies\/|\/anime-movies\/)/.test(lower))
-    score += 8;
-  if (mediaType === "tv" && /\/(episodes|anime-episodes)\//.test(lower))
-    score += 10;
-  if (mediaType === "tv" && /\/(seasons|anime)\//.test(lower))
-    score += 8;
-  if (mediaType === "tv" && /(\/series\/|\/anime-series\/)/.test(lower))
-    score += 4;
-  if (year && lower.includes(year))
-    score += 2;
-  var normalizedUrl = cleanText(decodeURIComponent(lower));
-  var titleWords = unique(title.split(" ").filter(function(w) {
-    return w.length > 2;
-  }));
-  var wordHits = 0;
-  for (var i = 0; i < titleWords.length; i++) {
-    if (normalizedUrl.includes(titleWords[i]))
-      wordHits += 1;
-  }
-  score += Math.min(wordHits, 5);
-  if (mediaType === "tv") {
-    if (season && new RegExp("(?:season|\u0627\u0644\u0645\u0648\u0633\u0645)\\s*" + season, "i").test(normalizedUrl))
-      score += 3;
-    if (episode && new RegExp("(?:episode|\u0627\u0644\u062D\u0644\u0642\u0629)\\s*" + episode, "i").test(normalizedUrl))
-      score += 4;
-  }
-  return score;
-}
-function extractEpisodeLinks(html) {
-  var links = [];
-  var re = /href="([^"]*\/(?:episodes|anime-episodes)\/[^"]*)"/gi;
-  var m;
+function extractHrefs(html) {
+  var out = [], m, re = /href="(https?:\/\/[^"]+\/(movies|series|seasons|episodes|anime[^"]*?)\/[^"]+)"/gi;
   while ((m = re.exec(html)) !== null)
-    links.push(m[1]);
-  return links;
+    out.push(m[1]);
+  return out.filter(function(v, i, a) {
+    return a.indexOf(v) === i;
+  });
 }
-function extractOnclickUrl(tag, baseUrl) {
-  var onclickMatch = tag.match(/onclick="([^"]*)"/i);
-  if (!onclickMatch)
-    return "";
-  var onclick = onclickMatch[1];
-  var pMatch = onclick.match(/['"]([^'"]*\?p=\d+)['"]/) || onclick.match(/href\s*=\s*'([^']+)'/);
-  if (!pMatch || !pMatch[1])
-    return "";
-  var url = pMatch[1];
-  if (!/^https?:\/\//i.test(url))
-    url = baseUrl + url;
-  return url;
+function search(query, base) {
+  return __async(this, null, function* () {
+    try {
+      var html = yield fetchPost(
+        base + "/wp-admin/admin-ajax.php",
+        "action=dtc_live&trsearch=" + encodeURIComponent(query),
+        { Referer: base + "/" }
+      );
+      var urls = extractHrefs(html);
+      if (urls.length)
+        return urls;
+    } catch (e) {
+    }
+    try {
+      var html2 = yield fetchText(base + "/?s=" + encodeURIComponent(query), { Referer: base + "/" });
+      return extractHrefs(html2);
+    } catch (e) {
+    }
+    return [];
+  });
 }
-function findEpisodeInLinks(episodeLinks, episode) {
-  var epNum = parseInt(episode, 10);
-  for (var i = 0; i < episodeLinks.length; i++) {
-    var decoded = decodeURIComponent(episodeLinks[i]);
-    var numMatch = decoded.match(/-(\d+)(?:-[^/]*)?\/?$/);
-    if (numMatch && parseInt(numMatch[1], 10) === epNum)
-      return episodeLinks[i];
+function pickBest(urls, mediaType, title) {
+  var lower = title.toLowerCase();
+  var words = lower.split(/\s+/).filter(function(w2) {
+    return w2.length > 2;
+  });
+  var best = "", bestScore = -1;
+  for (var i = 0; i < urls.length; i++) {
+    var u = decodeURIComponent(urls[i]).toLowerCase();
+    var s = 0;
+    if (mediaType === "movie" && /\/movies\//.test(u))
+      s += 5;
+    if (mediaType === "tv" && /\/(series|seasons|episodes)\//.test(u))
+      s += 5;
+    for (var w = 0; w < words.length; w++)
+      if (u.indexOf(words[w]) >= 0)
+        s++;
+    if (s > bestScore) {
+      bestScore = s;
+      best = urls[i];
+    }
   }
-  if (epNum >= 1 && epNum <= episodeLinks.length)
-    return episodeLinks[epNum - 1];
-  return "";
+  return best;
 }
-function resolveEpisodeFromSeasons(seasonsPageUrl, season, episode, baseUrl, cacheId) {
+function epLinks(html) {
+  var out = [], m, re = /href="([^"]*\/(?:episodes|anime-episodes)\/[^"]*)"/gi;
+  while ((m = re.exec(html)) !== null)
+    out.push(m[1]);
+  return out.filter(function(v, i, a) {
+    return a.indexOf(v) === i;
+  });
+}
+function pickEpisode(links, ep) {
+  var n = parseInt(ep, 10);
+  for (var i = 0; i < links.length; i++) {
+    var m = decodeURIComponent(links[i]).match(/-(\d+)\/?$/);
+    if (m && parseInt(m[1], 10) === n)
+      return links[i];
+  }
+  return n >= 1 && n <= links.length ? links[n - 1] : "";
+}
+function resolveEpisode(pageUrl, season, episode, base) {
   return __async(this, null, function* () {
-    var cacheKey = (cacheId || seasonsPageUrl) + "_s" + season;
-    if (_episodeCache[cacheKey]) {
-      console.log("[FaselHDX] Cache hit for " + cacheKey);
-      return findEpisodeInLinks(_episodeCache[cacheKey], episode);
-    }
-    var html = yield fetchText(seasonsPageUrl, {
-      headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: baseUrl + "/main" })
-    });
+    var html = yield fetchText(pageUrl, { Referer: base + "/" });
     var divRe = /<div[^>]*class="[^"]*\bseasonDiv\b[^"]*"[^>]*>/gi;
-    var divTags = [];
-    var dm;
-    while ((dm = divRe.exec(html)) !== null) {
-      divTags.push({ index: dm.index, tag: dm[0] });
+    var divs = [], dm;
+    while ((dm = divRe.exec(html)) !== null)
+      divs.push({ idx: dm.index, tag: dm[0] });
+    if (divs.length === 0) {
+      var links = epLinks(html);
+      return pickEpisode(links, episode);
     }
-    if (divTags.length === 0)
-      return "";
-    var seasonIdx = Math.max(0, Math.min(parseInt(season, 10) - 1, divTags.length - 1));
-    var startIdx = divTags[seasonIdx].index;
-    var endIdx = seasonIdx + 1 < divTags.length ? divTags[seasonIdx + 1].index : html.length;
-    var seasonBlock = html.substring(startIdx, endIdx);
-    var episodeLinks = extractEpisodeLinks(seasonBlock);
-    if (episodeLinks.length === 0) {
-      var seasonUrl = extractOnclickUrl(divTags[seasonIdx].tag, baseUrl);
-      if (seasonUrl) {
-        var sHtml = yield fetchText(seasonUrl, {
-          headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: seasonsPageUrl })
-        });
-        if (sHtml)
-          episodeLinks = extractEpisodeLinks(sHtml);
+    var si = Math.max(0, Math.min(parseInt(season, 10) - 1, divs.length - 1));
+    var start = divs[si].idx;
+    var end = si + 1 < divs.length ? divs[si + 1].idx : html.length;
+    var block = html.substring(start, end);
+    var links = epLinks(block);
+    if (!links.length) {
+      var pm = divs[si].tag.match(/onclick="[^"]*['"]([^'"]*\?p=\d+)['"]/i);
+      if (pm) {
+        var sUrl = pm[1];
+        if (!/^https?:/.test(sUrl))
+          sUrl = base + sUrl;
+        try {
+          var sHtml = yield fetchText(sUrl, { Referer: pageUrl });
+          links = epLinks(sHtml);
+        } catch (e) {
+        }
       }
     }
-    if (episodeLinks.length === 0)
-      episodeLinks = extractEpisodeLinks(html);
-    episodeLinks = unique(episodeLinks);
-    if (episodeLinks.length === 0)
-      return "";
-    _episodeCache[cacheKey] = episodeLinks;
-    console.log("[FaselHDX] Cached " + episodeLinks.length + " episodes for " + cacheKey);
-    return findEpisodeInLinks(episodeLinks, episode);
+    if (!links.length)
+      links = epLinks(html);
+    return pickEpisode(links, episode);
   });
 }
-function resolvePageUrl(tmdbMeta, mediaType, season, episode, baseUrl) {
-  return __async(this, null, function* () {
-    var searchKey = tmdbMeta.title + "_" + (tmdbMeta.year || "");
-    var candidates;
-    if (_searchCache[searchKey]) {
-      candidates = _searchCache[searchKey];
-    } else {
-      candidates = yield searchCandidates(tmdbMeta.title, baseUrl);
-      if (candidates.length === 0 && tmdbMeta.year) {
-        candidates = yield searchCandidates(tmdbMeta.title + " " + tmdbMeta.year, baseUrl);
-      }
-      candidates = unique(candidates);
-      _searchCache[searchKey] = candidates;
-    }
-    if (candidates.length === 0)
-      return "";
-    var ranked = candidates.map(function(url) {
-      return { url, score: scoreCandidate(url, mediaType, season, episode, tmdbMeta.title || "", tmdbMeta.year || "") };
-    }).sort(function(a, b) {
-      return b.score - a.score;
-    });
-    var bestUrl = ranked[0] ? ranked[0].url : "";
-    if (mediaType === "tv" && season && episode && bestUrl && /\/(seasons|anime)\//.test(bestUrl)) {
-      var episodeUrl = yield resolveEpisodeFromSeasons(bestUrl, season, episode, baseUrl, tmdbMeta.title);
-      if (episodeUrl)
-        return episodeUrl;
-    }
-    return bestUrl;
-  });
-}
-function extractPlayerUrls(html) {
-  var urls = [];
-  var re1 = /'(https?:\/\/[^']+\/video_player\?player_token=[^']+)'/gi;
-  var m;
+function playerUrls(html) {
+  var out = [], m;
+  var re1 = /'(https?:\/\/[^']+\/video_player\?[^']+)'/gi;
   while ((m = re1.exec(html)) !== null)
-    urls.push(m[1]);
-  var re2 = /<iframe[^>]*(?:data-src|src)="(https?:\/\/[^"]*video_player\?player_token=[^"]*)"/gi;
+    out.push(m[1]);
+  var re2 = /<iframe[^>]*(?:data-src|src)="(https?:\/\/[^"]*video_player\?[^"]*)"/gi;
   while ((m = re2.exec(html)) !== null)
-    urls.push(m[1]);
-  return unique(urls);
-}
-function executeQualityScript(scriptContent, baseUrl) {
-  var captured = "";
-  scriptContent = scriptContent.replace(
-    /\['test'\]\(this\['[^']+'\]\['toString'\]\(\)\)/g,
-    `['test']("function (){return'newState';}")`
-  );
-  var lc = 0;
-  scriptContent = scriptContent.replace(/while\s*\(\s*!!\s*\[\s*\]\s*\)\s*\{/g, function() {
-    lc++;
-    return "var __lc" + lc + "=0;while(++__lc" + lc + "<500){";
+    out.push(m[1]);
+  return out.filter(function(v, i, a) {
+    return a.indexOf(v) === i;
   });
-  scriptContent = scriptContent.replace(/\bdebugger\b/g, "void 0");
-  var mockDoc = {
-    write: function(s) {
-      captured += s;
-    },
-    createElement: function() {
-      return {};
-    },
-    querySelector: function() {
-      return {};
-    },
-    querySelectorAll: function() {
-      return [];
-    },
-    getElementById: function() {
-      return null;
-    }
+}
+function m3u8urls(text) {
+  var out = [], m, re = /https?:\/\/[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?/gi;
+  text = text.replace(/\\\//g, "/");
+  while ((m = re.exec(text)) !== null)
+    out.push(m[0]);
+  return out.filter(function(v, i, a) {
+    return a.indexOf(v) === i;
+  });
+}
+function runQualityScript(script, base) {
+  var captured = "";
+  script = script.replace(/\['test'\]\(this\['[^']+'\]\['toString'\]\(\)\)/g, `['test']("function(){return'x'}")`);
+  var n = 0;
+  script = script.replace(/while\s*\(\s*!!\s*\[\s*\]\s*\)\s*\{/g, function() {
+    n++;
+    return "var __c" + n + "=0;while(++__c" + n + "<500){";
+  });
+  script = script.replace(/\bdebugger\b/g, "void 0");
+  var host = base.replace(/^https?:\/\//, "");
+  var noop = function() {
   };
   var mock$ = function() {
     var r = {};
-    r.on = function() {
-      return r;
-    };
-    r.html = function() {
-      return r;
-    };
-    r.addClass = function() {
-      return r;
-    };
-    r.removeClass = function() {
+    r.on = r.html = r.addClass = r.removeClass = r.fadeIn = r.fadeOut = r.click = r.find = r.each = function() {
       return r;
     };
     r.attr = function() {
       return null;
-    };
-    r.fadeIn = function() {
-      return r;
-    };
-    r.fadeOut = function() {
-      return r;
-    };
-    r.click = function() {
-      return r;
-    };
-    r.find = function() {
-      return r;
-    };
-    r.each = function() {
-      return r;
     };
     r.text = function() {
       return "";
     };
     return r;
   };
-  var polyfillAtob = function(s) {
-    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-    var o = "", i2 = 0;
+  var atob = function(s) {
+    var t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=", o = "", i = 0;
     s = String(s).replace(/[^A-Za-z0-9+/=]/g, "");
-    while (i2 < s.length) {
-      var e1 = chars.indexOf(s[i2++]), e2 = chars.indexOf(s[i2++]);
-      var e3 = chars.indexOf(s[i2++]), e4 = chars.indexOf(s[i2++]);
-      var n = e1 << 18 | e2 << 12 | e3 << 6 | e4;
-      o += String.fromCharCode(n >> 16 & 255);
-      if (e3 !== 64)
-        o += String.fromCharCode(n >> 8 & 255);
-      if (e4 !== 64)
-        o += String.fromCharCode(n & 255);
+    while (i < s.length) {
+      var a = t.indexOf(s[i++]), b = t.indexOf(s[i++]), c = t.indexOf(s[i++]), d = t.indexOf(s[i++]), x = a << 18 | b << 12 | c << 6 | d;
+      o += String.fromCharCode(x >> 16 & 255);
+      if (c !== 64)
+        o += String.fromCharCode(x >> 8 & 255);
+      if (d !== 64)
+        o += String.fromCharCode(x & 255);
     }
     return o;
   };
-  var polyfillBtoa = function(s) {
-    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-    var r = "", i2 = 0;
-    while (i2 < s.length) {
-      var a = s.charCodeAt(i2++);
-      var b = i2 < s.length ? s.charCodeAt(i2++) : NaN;
-      var c = i2 < s.length ? s.charCodeAt(i2++) : NaN;
-      r += chars[a >> 2];
-      r += chars[(a & 3) << 4 | b >> 4];
-      r += isNaN(b) ? "=" : chars[(b & 15) << 2 | c >> 6];
-      r += isNaN(c) ? "=" : chars[c & 63];
-    }
-    return r;
-  };
-  var hostname = "www.faselhds.biz";
+  var doc = { write: function(s) {
+    captured += s;
+  }, createElement: function() {
+    return {};
+  }, querySelector: function() {
+    return {};
+  }, querySelectorAll: function() {
+    return [];
+  }, getElementById: function() {
+    return null;
+  } };
   try {
-    hostname = baseUrl.replace(/^https?:\/\//, "");
-  } catch (e) {
-  }
-  var scopeEntries = [
-    ["document", mockDoc],
-    ["navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36" }],
-    ["location", { href: baseUrl, hostname }],
-    ["console", { log: function() {
-    }, warn: function() {
-    }, error: function() {
-    } }],
-    ["parseInt", parseInt],
-    ["parseFloat", parseFloat],
-    ["isNaN", isNaN],
-    ["isFinite", isFinite],
-    ["String", String],
-    ["Number", Number],
-    ["Array", Array],
-    ["Object", Object],
-    ["Boolean", Boolean],
-    ["RegExp", RegExp],
-    ["Function", void 0],
-    ["Error", Error],
-    ["TypeError", TypeError],
-    ["RangeError", RangeError],
-    ["SyntaxError", SyntaxError],
-    ["encodeURIComponent", encodeURIComponent],
-    ["decodeURIComponent", decodeURIComponent],
-    ["encodeURI", encodeURI],
-    ["decodeURI", decodeURI],
-    ["Math", Math],
-    ["Date", Date],
-    ["JSON", JSON],
-    ["NaN", NaN],
-    ["Infinity", Infinity],
-    ["undefined", void 0],
-    ["setTimeout", function() {
-      return 1;
-    }],
-    ["setInterval", function() {
-      return 1;
-    }],
-    ["clearTimeout", function() {
-    }],
-    ["clearInterval", function() {
-    }],
-    ["$", mock$],
-    ["jQuery", mock$],
-    ["Cookies", { get: function() {
+    var fn = new Function("document", "navigator", "location", "console", "$", "jQuery", "Cookies", "atob", "btoa", "setTimeout", "setInterval", "clearTimeout", "clearInterval", "parseInt", "parseFloat", "isNaN", "String", "Number", "Array", "Object", "Boolean", "RegExp", "Error", "Math", "Date", "JSON", "encodeURIComponent", "decodeURIComponent", "window", "self", "globalThis", "Function", script);
+    var w = {};
+    fn.call(w, doc, { userAgent: "Mozilla/5.0" }, { href: base, hostname: host }, { log: noop, warn: noop, error: noop }, mock$, mock$, { get: function() {
       return null;
-    }, set: function() {
-    } }],
-    ["atob", polyfillAtob],
-    ["btoa", polyfillBtoa]
-  ];
-  var scopeObj = {};
-  for (var i = 0; i < scopeEntries.length; i++) {
-    scopeObj[scopeEntries[i][0]] = scopeEntries[i][1];
-  }
-  scopeObj.window = scopeObj;
-  scopeObj.self = scopeObj;
-  scopeObj.globalThis = scopeObj;
-  scopeEntries.push(["window", scopeObj], ["self", scopeObj], ["globalThis", scopeObj]);
-  var paramNames = scopeEntries.map(function(e) {
-    return e[0];
-  }).join(", ");
-  var paramValues = scopeEntries.map(function(e) {
-    return e[1];
-  });
-  try {
-    var executor = new Function(paramNames, scriptContent);
-    executor.apply(null, paramValues);
+    }, set: noop }, atob, function() {
+      return "";
+    }, noop, noop, noop, noop, parseInt, parseFloat, isNaN, String, Number, Array, Object, Boolean, RegExp, Error, Math, Date, JSON, encodeURIComponent, decodeURIComponent, w, w, w, void 0);
   } catch (e) {
-    console.error("[FaselHDX] sandbox error: " + (e && e.message || e));
   }
   return captured;
 }
-function extractQualityScriptUrls(playerHtml, baseUrl) {
-  var qcMatch = playerHtml.match(/<div\s+class="quality_change">([\s\S]*?)<\/div>/i);
-  if (!qcMatch)
-    return [];
-  var scriptMatch = qcMatch[1].match(/<script[^>]*>([\s\S]+?)<\/script>/i);
-  if (!scriptMatch || scriptMatch[1].trim().length < 500)
-    return [];
-  var htmlOutput = executeQualityScript(scriptMatch[1].trim(), baseUrl);
-  if (!htmlOutput)
-    return [];
-  var urls = [];
-  var re = /data-url="([^"]+)"/g;
-  var m;
-  while ((m = re.exec(htmlOutput)) !== null) {
-    if (m[1] && /^https?:\/\//i.test(m[1]))
-      urls.push(m[1]);
-  }
-  return urls;
-}
-function extractLiteralUrls(html) {
-  var urls = [];
-  var normalized = String(html || "").replace(/\\\//g, "/");
-  var re = /https?:\/\/[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?/gi;
-  var m;
-  while ((m = re.exec(normalized)) !== null) {
-    if (m[0])
-      urls.push(m[0]);
-  }
-  return urls;
-}
-function resolveDirectFromPlayer(playerUrl, pageUrl, baseUrl) {
+function extractFromPlayer(playerUrl, referer, base) {
   return __async(this, null, function* () {
-    try {
-      var html = yield fetchText(playerUrl, {
-        headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: pageUrl, Origin: baseUrl })
-      });
-      var qcUrls = extractQualityScriptUrls(html, baseUrl);
-      if (qcUrls.length > 0) {
-        return qcUrls.map(function(url) {
-          var quality = "auto";
-          if (/hd1080/i.test(url))
-            quality = "1080p";
-          else if (/hd720/i.test(url))
-            quality = "720p";
-          else if (/sd480/i.test(url))
-            quality = "480p";
-          else if (/sd360/i.test(url))
-            quality = "360p";
-          return {
-            url,
-            quality,
-            headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: baseUrl + "/", Origin: baseUrl })
-          };
-        });
+    var html = yield fetchText(playerUrl, { Referer: referer, Origin: base });
+    var streams = [];
+    var qc = html.match(/<div\s+class="quality_change">([\s\S]*?)<\/div>/i);
+    if (qc) {
+      var sc = qc[1].match(/<script[^>]*>([\s\S]+?)<\/script>/i);
+      if (sc && sc[1].length > 200) {
+        var out = runQualityScript(sc[1], base);
+        var dm, dre = /data-url="([^"]+)"/g;
+        while ((dm = dre.exec(out)) !== null) {
+          if (/^https?:/.test(dm[1])) {
+            var q = /hd1080/.test(dm[1]) ? "1080p" : /hd720/.test(dm[1]) ? "720p" : /sd480/.test(dm[1]) ? "480p" : /sd360/.test(dm[1]) ? "360p" : "auto";
+            streams.push({ url: dm[1], quality: q });
+          }
+        }
       }
-      var literalUrls = extractLiteralUrls(html);
-      return literalUrls.map(function(url) {
-        return {
-          url,
-          quality: "auto",
-          headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: baseUrl + "/", Origin: baseUrl })
-        };
-      });
-    } catch (e) {
-      return [];
     }
+    if (!streams.length) {
+      m3u8urls(html).forEach(function(u) {
+        streams.push({ url: u, quality: "auto" });
+      });
+    }
+    return streams;
   });
-}
-function buildStreams(directStreams) {
-  var qualityOrder = { "1080p": 0, "720p": 1, "480p": 2, "360p": 3, "auto": 4 };
-  var sorted = directStreams.slice().sort(function(a, b) {
-    var oa = a.quality in qualityOrder ? qualityOrder[a.quality] : 99;
-    var ob = b.quality in qualityOrder ? qualityOrder[b.quality] : 99;
-    return oa - ob;
-  });
-  var streams = [];
-  for (var i = 0; i < sorted.length; i++) {
-    var s = sorted[i];
-    var label = s.quality === "auto" ? "Auto" : s.quality;
-    streams.push({
-      name: "FaselHDX - " + label,
-      title: label,
-      url: s.url,
-      quality: label,
-      headers: s.headers
-    });
-  }
-  return streams;
 }
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
-    if (typeof tmdbId === "string" && /^https?:\/\//i.test(tmdbId)) {
-      var baseUrl = yield resolveBaseUrl();
-      return yield extractFromPage(tmdbId, baseUrl);
-    }
-    var parallel = yield Promise.all([resolveBaseUrl(), resolveTmdbMeta(tmdbId, mediaType)]);
-    var baseUrl = parallel[0];
-    var tmdbMeta = parallel[1];
-    var pageUrl = yield resolvePageUrl(tmdbMeta, mediaType, season, episode, baseUrl);
+    var base = getBaseUrl();
+    var meta = yield tmdbTitle(tmdbId, mediaType);
+    if (!meta.title)
+      return [];
+    var urls = yield search(meta.title, base);
+    if (!urls.length && meta.year)
+      urls = yield search(meta.title + " " + meta.year, base);
+    if (!urls.length)
+      return [];
+    var pageUrl = pickBest(urls, mediaType, meta.title);
     if (!pageUrl)
       return [];
-    return yield extractFromPage(pageUrl, baseUrl);
-  });
-}
-function extractFromPage(pageUrl, baseUrl) {
-  return __async(this, null, function* () {
-    var html = yield fetchText(pageUrl, {
-      headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: baseUrl + "/main" })
-    });
-    var playerUrls = extractPlayerUrls(html);
-    var allStreams = [];
-    for (var i = 0; i < playerUrls.length; i++) {
-      var streams = yield resolveDirectFromPlayer(playerUrls[i], pageUrl, baseUrl);
-      allStreams.push.apply(allStreams, streams);
-      if (allStreams.length > 0)
-        break;
+    if (mediaType === "tv" && season && episode && /\/(series|seasons|anime)\//.test(pageUrl)) {
+      var epUrl = yield resolveEpisode(pageUrl, season, episode, base);
+      if (epUrl)
+        pageUrl = epUrl;
     }
-    var result = buildStreams(allStreams);
-    var seen = {};
-    var deduped = [];
-    for (var j = 0; j < result.length; j++) {
-      if (!result[j].url || seen[result[j].url])
-        continue;
-      seen[result[j].url] = true;
-      deduped.push(result[j]);
+    var html = yield fetchText(pageUrl, { Referer: base + "/" });
+    var players = playerUrls(html);
+    if (!players.length)
+      return [];
+    for (var i = 0; i < players.length; i++) {
+      try {
+        var streams = yield extractFromPlayer(players[i], pageUrl, base);
+        if (streams.length) {
+          var ref = { Referer: base + "/", Origin: base };
+          return streams.map(function(s) {
+            return {
+              name: "FaselHDX - " + (s.quality === "auto" ? "Auto" : s.quality),
+              title: s.quality === "auto" ? "Auto" : s.quality,
+              url: s.url,
+              quality: s.quality === "auto" ? "Auto" : s.quality,
+              headers: Object.assign({}, HEADERS, ref)
+            };
+          });
+        }
+      } catch (e) {
+      }
     }
-    return deduped;
+    return [];
   });
 }
 
