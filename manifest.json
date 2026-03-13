@@ -6,7 +6,7 @@
       "id": "FaselHDX",
       "name": "FaselHDX",
       "description": "Arabic streaming from FaselHDX with multi-quality HLS support",
-      "version": "1.0.9",
+      "version": "1.1.0",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",

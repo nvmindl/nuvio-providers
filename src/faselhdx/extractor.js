@@ -1,24 +1,23 @@
-import { HEADERS, fetchText, fetchPost, getBaseUrl } from './http.js';
+import { HEADERS, fetchText, fetchPost, getBaseUrl, setBaseUrl, getDomains } from './http.js';
 
 var TMDB_KEY = '439c478a771f35c05022f9feabcca01c';
 var TMDB = 'https://api.themoviedb.org/3';
 var _cache = {};
 
-// ── TMDB title lookup ────────────────────────────────────────────────────
+// ── TMDB title lookup (matches Kirmzi pattern: plain fetch, no AbortSignal) ──
 
 async function tmdbTitle(tmdbId, mediaType) {
     var k = tmdbId + mediaType;
     if (_cache[k]) return _cache[k];
     var path = mediaType === 'movie' ? 'movie' : 'tv';
-    var opts = { headers: { 'Accept': 'application/json' } };
-    try { if (AbortSignal.timeout) opts.signal = AbortSignal.timeout(8000); } catch(e) {}
-    var r = await fetch(TMDB + '/' + path + '/' + tmdbId + '?api_key=' + TMDB_KEY, opts);
-    if (!r.ok) throw new Error('TMDB ' + r.status);
-    var d = await r.json();
-    var title = mediaType === 'tv' ? (d.name || '') : (d.title || '');
-    var year = (mediaType === 'tv' ? d.first_air_date : d.release_date || '').split('-')[0] || '';
+    var fetchOpts = { method: 'GET', headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' } };
+    var r = await fetch(TMDB + '/' + path + '/' + tmdbId + '?api_key=' + TMDB_KEY, fetchOpts)
+        .then(function(resp) { return resp.ok ? resp.json() : {}; })
+        .catch(function() { return {}; });
+    var title = mediaType === 'tv' ? (r.name || '') : (r.title || '');
+    var year = (mediaType === 'tv' ? r.first_air_date : r.release_date || '').split('-')[0] || '';
     var res = { title: title, year: year };
-    _cache[k] = res;
+    if (title) _cache[k] = res;
     return res;
 }
 
@@ -32,21 +31,28 @@ function extractHrefs(html) {
 
 async function search(query, base) {
     // AJAX live search
-    try {
-        var html = await fetchPost(
-            base + '/wp-admin/admin-ajax.php',
-            'action=dtc_live&trsearch=' + encodeURIComponent(query),
-            { Referer: base + '/' }
-        );
+    var html = await fetchPost(
+        base + '/wp-admin/admin-ajax.php',
+        'action=dtc_live&trsearch=' + encodeURIComponent(query),
+        { headers: { Referer: base + '/' } }
+    );
+    if (html) {
         var urls = extractHrefs(html);
-        if (urls.length) return urls;
-    } catch(e) { /* ignore */ }
+        if (urls.length) {
+            console.log('[FaselHDX] AJAX search found ' + urls.length + ' results');
+            return urls;
+        }
+    }
 
     // Standard search
-    try {
-        var html2 = await fetchText(base + '/?s=' + encodeURIComponent(query), { Referer: base + '/' });
-        return extractHrefs(html2);
-    } catch(e) { /* ignore */ }
+    var html2 = await fetchText(base + '/?s=' + encodeURIComponent(query), { headers: { Referer: base + '/' } });
+    if (html2) {
+        var urls2 = extractHrefs(html2);
+        if (urls2.length) {
+            console.log('[FaselHDX] Standard search found ' + urls2.length + ' results');
+            return urls2;
+        }
+    }
 
     return [];
 }
@@ -84,7 +90,8 @@ function pickEpisode(links, ep) {
 }
 
 async function resolveEpisode(pageUrl, season, episode, base) {
-    var html = await fetchText(pageUrl, { Referer: base + '/' });
+    var html = await fetchText(pageUrl, { headers: { Referer: base + '/' } });
+    if (!html) return '';
 
     // Find season divs
     var divRe = /<div[^>]*class="[^"]*\bseasonDiv\b[^"]*"[^>]*>/gi;
@@ -92,7 +99,6 @@ async function resolveEpisode(pageUrl, season, episode, base) {
     while ((dm = divRe.exec(html)) !== null) divs.push({ idx: dm.index, tag: dm[0] });
 
     if (divs.length === 0) {
-        // Maybe direct episode listing
         var links = epLinks(html);
         return pickEpisode(links, episode);
     }
@@ -103,16 +109,13 @@ async function resolveEpisode(pageUrl, season, episode, base) {
     var block = html.substring(start, end);
     var links = epLinks(block);
 
-    // If no episodes in block, check onclick for season sub-page
     if (!links.length) {
         var pm = divs[si].tag.match(/onclick="[^"]*['"]([^'"]*\?p=\d+)['"]/i);
         if (pm) {
             var sUrl = pm[1];
             if (!/^https?:/.test(sUrl)) sUrl = base + sUrl;
-            try {
-                var sHtml = await fetchText(sUrl, { Referer: pageUrl });
-                links = epLinks(sHtml);
-            } catch(e) { /* ignore */ }
+            var sHtml = await fetchText(sUrl, { headers: { Referer: pageUrl } });
+            if (sHtml) links = epLinks(sHtml);
         }
     }
 
@@ -141,8 +144,8 @@ function m3u8urls(text) {
 function runQualityScript(script, base) {
     var captured = '';
     // Neutralize anti-debug
-    script = script.replace(/\['test'\]\(this\['[^']+'\]\['toString'\]\(\)\)/g, "['test'](\"function(){return'x'}\")");
-    // Cap infinite loops
+    var antiDebugRepl = String.fromCharCode(91) + String.fromCharCode(39) + 'test' + String.fromCharCode(39) + '](\"function(){return' + String.fromCharCode(39) + 'x' + String.fromCharCode(39) + '}\")';
+    script = script.replace(/\['test'\]\(this\['[^']+'\]\['toString'\]\(\)\)/g, antiDebugRepl);    // Cap infinite loops
     var n = 0;
     script = script.replace(/while\s*\(\s*!!\s*\[\s*\]\s*\)\s*\{/g, function() { n++; return 'var __c'+n+'=0;while(++__c'+n+'<500){'; });
     script = script.replace(/\bdebugger\b/g, 'void 0');
@@ -175,7 +178,8 @@ function runQualityScript(script, base) {
 }
 
 async function extractFromPlayer(playerUrl, referer, base) {
-    var html = await fetchText(playerUrl, { Referer: referer, Origin: base });
+    var html = await fetchText(playerUrl, { headers: { Referer: referer, Origin: base } });
+    if (!html) return [];
     var streams = [];
 
     // Try quality_change script first
@@ -205,34 +209,57 @@ async function extractFromPlayer(playerUrl, referer, base) {
 // ── Main export ──────────────────────────────────────────────────────────
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    var base = getBaseUrl();
+    console.log('[FaselHDX] Starting: ' + mediaType + ' ' + tmdbId);
     var meta = await tmdbTitle(tmdbId, mediaType);
-    if (!meta.title) return [];
-
-    // Search
-    var urls = await search(meta.title, base);
-    if (!urls.length && meta.year) urls = await search(meta.title + ' ' + meta.year, base);
-    if (!urls.length) return [];
-
-    var pageUrl = pickBest(urls, mediaType, meta.title);
-    if (!pageUrl) return [];
-
-    // For TV: resolve to specific episode
-    if (mediaType === 'tv' && season && episode && /\/(series|seasons|anime)\//.test(pageUrl)) {
-        var epUrl = await resolveEpisode(pageUrl, season, episode, base);
-        if (epUrl) pageUrl = epUrl;
+    if (!meta.title) {
+        console.log('[FaselHDX] No title from TMDB');
+        return [];
     }
+    console.log('[FaselHDX] Title: ' + meta.title + ' (' + meta.year + ')');
 
-    // Fetch the content page and find player iframes
-    var html = await fetchText(pageUrl, { Referer: base + '/' });
-    var players = playerUrls(html);
-    if (!players.length) return [];
+    // Try each domain until we find results
+    var domains = getDomains();
+    for (var d = 0; d < domains.length; d++) {
+        var base = domains[d];
+        setBaseUrl(base);
+        console.log('[FaselHDX] Trying domain: ' + base);
 
-    // Extract streams from first working player
-    for (var i = 0; i < players.length; i++) {
-        try {
+        var urls = await search(meta.title, base);
+        if (!urls.length && meta.year) urls = await search(meta.title + ' ' + meta.year, base);
+        if (!urls.length) {
+            console.log('[FaselHDX] No search results from ' + base);
+            continue;
+        }
+
+        var pageUrl = pickBest(urls, mediaType, meta.title);
+        if (!pageUrl) {
+            console.log('[FaselHDX] No matching page');
+            continue;
+        }
+        console.log('[FaselHDX] Page: ' + pageUrl);
+
+        // For TV: resolve to specific episode
+        if (mediaType === 'tv' && season && episode && /\/(series|seasons|anime)\//.test(pageUrl)) {
+            var epUrl = await resolveEpisode(pageUrl, season, episode, base);
+            if (epUrl) pageUrl = epUrl;
+            console.log('[FaselHDX] Episode URL: ' + pageUrl);
+        }
+
+        // Fetch the content page and find player iframes
+        var html = await fetchText(pageUrl, { headers: { Referer: base + '/' } });
+        if (!html) {
+            console.log('[FaselHDX] Empty page response');
+            continue;
+        }
+        var players = playerUrls(html);
+        console.log('[FaselHDX] Found ' + players.length + ' players');
+        if (!players.length) continue;
+
+        // Extract streams from first working player
+        for (var i = 0; i < players.length; i++) {
             var streams = await extractFromPlayer(players[i], pageUrl, base);
             if (streams.length) {
+                console.log('[FaselHDX] Got ' + streams.length + ' streams');
                 var ref = { Referer: base + '/', Origin: base };
                 return streams.map(function(s) {
                     return {
@@ -244,8 +271,9 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
                     };
                 });
             }
-        } catch(e) { /* try next */ }
+        }
     }
 
+    console.log('[FaselHDX] No streams found from any domain');
     return [];
 }

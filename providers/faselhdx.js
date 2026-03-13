@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-13T11:34:44.684Z
+ * Generated: 2026-03-13T11:58:44.017Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -24,58 +24,90 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/faselhdx/http.js
-var BASE = "https://www.faselhds.biz";
+var DOMAINS = ["https://www.fasel-hd.cam", "https://www.faselhds.biz"];
+var _baseUrl = DOMAINS[0];
 var HEADERS = {
   "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.8"
 };
-function getBaseUrl() {
-  return BASE;
+function setBaseUrl(u) {
+  _baseUrl = u;
 }
-function makeSignal(ms) {
-  try {
-    if (typeof AbortSignal !== "undefined" && AbortSignal.timeout)
-      return AbortSignal.timeout(ms);
-  } catch (e) {
-  }
-  try {
-    var c = new AbortController();
-    setTimeout(function() {
-      c.abort();
-    }, ms);
-    return c.signal;
-  } catch (e) {
-  }
-  return void 0;
+function getDomains() {
+  return DOMAINS;
 }
-function fetchText(url, extra) {
+function fetchText(url, options) {
   return __async(this, null, function* () {
-    var h = Object.assign({}, HEADERS, extra || {});
-    var opts = { headers: h, redirect: "follow" };
-    var sig = makeSignal(12e3);
-    if (sig)
-      opts.signal = sig;
-    var r = yield fetch(url, opts);
-    if (!r.ok)
-      throw new Error("HTTP " + r.status);
-    return r.text();
+    options = options || {};
+    var controller;
+    var timeoutId;
+    try {
+      controller = new AbortController();
+      timeoutId = setTimeout(function() {
+        controller.abort();
+      }, options.timeout || 15e3);
+    } catch (e) {
+      controller = null;
+    }
+    try {
+      var fetchOpts = {
+        redirect: "follow",
+        headers: Object.assign({}, HEADERS, options.headers || {})
+      };
+      if (controller)
+        fetchOpts.signal = controller.signal;
+      var response = yield fetch(url, fetchOpts);
+      if (timeoutId)
+        clearTimeout(timeoutId);
+      if (!response.ok)
+        return "";
+      return yield response.text();
+    } catch (e) {
+      if (timeoutId)
+        clearTimeout(timeoutId);
+      console.log("[FaselHDX] fetch error: " + e.message);
+      return "";
+    }
   });
 }
-function fetchPost(url, body, extra) {
+function fetchPost(url, body, options) {
   return __async(this, null, function* () {
-    var h = Object.assign({}, HEADERS, {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "X-Requested-With": "XMLHttpRequest"
-    }, extra || {});
-    var opts = { method: "POST", headers: h, body, redirect: "follow" };
-    var sig = makeSignal(12e3);
-    if (sig)
-      opts.signal = sig;
-    var r = yield fetch(url, opts);
-    if (!r.ok)
-      throw new Error("HTTP " + r.status);
-    return r.text();
+    options = options || {};
+    var controller;
+    var timeoutId;
+    try {
+      controller = new AbortController();
+      timeoutId = setTimeout(function() {
+        controller.abort();
+      }, options.timeout || 15e3);
+    } catch (e) {
+      controller = null;
+    }
+    try {
+      var fetchOpts = {
+        method: "POST",
+        body,
+        redirect: "follow",
+        headers: Object.assign({}, HEADERS, {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-Requested-With": "XMLHttpRequest"
+        }, options.headers || {})
+      };
+      if (controller)
+        fetchOpts.signal = controller.signal;
+      var response = yield fetch(url, fetchOpts);
+      if (timeoutId)
+        clearTimeout(timeoutId);
+      if (!response.ok)
+        return "";
+      return yield response.text();
+    } catch (e) {
+      if (timeoutId)
+        clearTimeout(timeoutId);
+      console.log("[FaselHDX] fetchPost error: " + e.message);
+      return "";
+    }
   });
 }
 
@@ -89,20 +121,17 @@ function tmdbTitle(tmdbId, mediaType) {
     if (_cache[k])
       return _cache[k];
     var path = mediaType === "movie" ? "movie" : "tv";
-    var opts = { headers: { "Accept": "application/json" } };
-    try {
-      if (AbortSignal.timeout)
-        opts.signal = AbortSignal.timeout(8e3);
-    } catch (e) {
-    }
-    var r = yield fetch(TMDB + "/" + path + "/" + tmdbId + "?api_key=" + TMDB_KEY, opts);
-    if (!r.ok)
-      throw new Error("TMDB " + r.status);
-    var d = yield r.json();
-    var title = mediaType === "tv" ? d.name || "" : d.title || "";
-    var year = (mediaType === "tv" ? d.first_air_date : d.release_date || "").split("-")[0] || "";
+    var fetchOpts = { method: "GET", headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" } };
+    var r = yield fetch(TMDB + "/" + path + "/" + tmdbId + "?api_key=" + TMDB_KEY, fetchOpts).then(function(resp) {
+      return resp.ok ? resp.json() : {};
+    }).catch(function() {
+      return {};
+    });
+    var title = mediaType === "tv" ? r.name || "" : r.title || "";
+    var year = (mediaType === "tv" ? r.first_air_date : r.release_date || "").split("-")[0] || "";
     var res = { title, year };
-    _cache[k] = res;
+    if (title)
+      _cache[k] = res;
     return res;
   });
 }
@@ -116,21 +145,25 @@ function extractHrefs(html) {
 }
 function search(query, base) {
   return __async(this, null, function* () {
-    try {
-      var html = yield fetchPost(
-        base + "/wp-admin/admin-ajax.php",
-        "action=dtc_live&trsearch=" + encodeURIComponent(query),
-        { Referer: base + "/" }
-      );
+    var html = yield fetchPost(
+      base + "/wp-admin/admin-ajax.php",
+      "action=dtc_live&trsearch=" + encodeURIComponent(query),
+      { headers: { Referer: base + "/" } }
+    );
+    if (html) {
       var urls = extractHrefs(html);
-      if (urls.length)
+      if (urls.length) {
+        console.log("[FaselHDX] AJAX search found " + urls.length + " results");
         return urls;
-    } catch (e) {
+      }
     }
-    try {
-      var html2 = yield fetchText(base + "/?s=" + encodeURIComponent(query), { Referer: base + "/" });
-      return extractHrefs(html2);
-    } catch (e) {
+    var html2 = yield fetchText(base + "/?s=" + encodeURIComponent(query), { headers: { Referer: base + "/" } });
+    if (html2) {
+      var urls2 = extractHrefs(html2);
+      if (urls2.length) {
+        console.log("[FaselHDX] Standard search found " + urls2.length + " results");
+        return urls2;
+      }
     }
     return [];
   });
@@ -177,7 +210,9 @@ function pickEpisode(links, ep) {
 }
 function resolveEpisode(pageUrl, season, episode, base) {
   return __async(this, null, function* () {
-    var html = yield fetchText(pageUrl, { Referer: base + "/" });
+    var html = yield fetchText(pageUrl, { headers: { Referer: base + "/" } });
+    if (!html)
+      return "";
     var divRe = /<div[^>]*class="[^"]*\bseasonDiv\b[^"]*"[^>]*>/gi;
     var divs = [], dm;
     while ((dm = divRe.exec(html)) !== null)
@@ -197,11 +232,9 @@ function resolveEpisode(pageUrl, season, episode, base) {
         var sUrl = pm[1];
         if (!/^https?:/.test(sUrl))
           sUrl = base + sUrl;
-        try {
-          var sHtml = yield fetchText(sUrl, { Referer: pageUrl });
+        var sHtml = yield fetchText(sUrl, { headers: { Referer: pageUrl } });
+        if (sHtml)
           links = epLinks(sHtml);
-        } catch (e) {
-        }
       }
     }
     if (!links.length)
@@ -232,7 +265,8 @@ function m3u8urls(text) {
 }
 function runQualityScript(script, base) {
   var captured = "";
-  script = script.replace(/\['test'\]\(this\['[^']+'\]\['toString'\]\(\)\)/g, `['test']("function(){return'x'}")`);
+  var antiDebugRepl = String.fromCharCode(91) + String.fromCharCode(39) + "test" + String.fromCharCode(39) + ']("function(){return' + String.fromCharCode(39) + "x" + String.fromCharCode(39) + '}")';
+  script = script.replace(/\['test'\]\(this\['[^']+'\]\['toString'\]\(\)\)/g, antiDebugRepl);
   var n = 0;
   script = script.replace(/while\s*\(\s*!!\s*\[\s*\]\s*\)\s*\{/g, function() {
     n++;
@@ -304,7 +338,9 @@ function runQualityScript(script, base) {
 }
 function extractFromPlayer(playerUrl, referer, base) {
   return __async(this, null, function* () {
-    var html = yield fetchText(playerUrl, { Referer: referer, Origin: base });
+    var html = yield fetchText(playerUrl, { headers: { Referer: referer, Origin: base } });
+    if (!html)
+      return [];
     var streams = [];
     var qc = html.match(/<div\s+class="quality_change">([\s\S]*?)<\/div>/i);
     if (qc) {
@@ -330,31 +366,50 @@ function extractFromPlayer(playerUrl, referer, base) {
 }
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
-    var base = getBaseUrl();
+    console.log("[FaselHDX] Starting: " + mediaType + " " + tmdbId);
     var meta = yield tmdbTitle(tmdbId, mediaType);
-    if (!meta.title)
+    if (!meta.title) {
+      console.log("[FaselHDX] No title from TMDB");
       return [];
-    var urls = yield search(meta.title, base);
-    if (!urls.length && meta.year)
-      urls = yield search(meta.title + " " + meta.year, base);
-    if (!urls.length)
-      return [];
-    var pageUrl = pickBest(urls, mediaType, meta.title);
-    if (!pageUrl)
-      return [];
-    if (mediaType === "tv" && season && episode && /\/(series|seasons|anime)\//.test(pageUrl)) {
-      var epUrl = yield resolveEpisode(pageUrl, season, episode, base);
-      if (epUrl)
-        pageUrl = epUrl;
     }
-    var html = yield fetchText(pageUrl, { Referer: base + "/" });
-    var players = playerUrls(html);
-    if (!players.length)
-      return [];
-    for (var i = 0; i < players.length; i++) {
-      try {
+    console.log("[FaselHDX] Title: " + meta.title + " (" + meta.year + ")");
+    var domains = getDomains();
+    for (var d = 0; d < domains.length; d++) {
+      var base = domains[d];
+      setBaseUrl(base);
+      console.log("[FaselHDX] Trying domain: " + base);
+      var urls = yield search(meta.title, base);
+      if (!urls.length && meta.year)
+        urls = yield search(meta.title + " " + meta.year, base);
+      if (!urls.length) {
+        console.log("[FaselHDX] No search results from " + base);
+        continue;
+      }
+      var pageUrl = pickBest(urls, mediaType, meta.title);
+      if (!pageUrl) {
+        console.log("[FaselHDX] No matching page");
+        continue;
+      }
+      console.log("[FaselHDX] Page: " + pageUrl);
+      if (mediaType === "tv" && season && episode && /\/(series|seasons|anime)\//.test(pageUrl)) {
+        var epUrl = yield resolveEpisode(pageUrl, season, episode, base);
+        if (epUrl)
+          pageUrl = epUrl;
+        console.log("[FaselHDX] Episode URL: " + pageUrl);
+      }
+      var html = yield fetchText(pageUrl, { headers: { Referer: base + "/" } });
+      if (!html) {
+        console.log("[FaselHDX] Empty page response");
+        continue;
+      }
+      var players = playerUrls(html);
+      console.log("[FaselHDX] Found " + players.length + " players");
+      if (!players.length)
+        continue;
+      for (var i = 0; i < players.length; i++) {
         var streams = yield extractFromPlayer(players[i], pageUrl, base);
         if (streams.length) {
+          console.log("[FaselHDX] Got " + streams.length + " streams");
           var ref = { Referer: base + "/", Origin: base };
           return streams.map(function(s) {
             return {
@@ -366,9 +421,9 @@ function extractStreams(tmdbId, mediaType, season, episode) {
             };
           });
         }
-      } catch (e) {
       }
     }
+    console.log("[FaselHDX] No streams found from any domain");
     return [];
   });
 }
@@ -377,10 +432,10 @@ function extractStreams(tmdbId, mediaType, season, episode) {
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
-      console.log(`[FaselHDX] Request: ${mediaType} ${tmdbId}`);
+      console.log("[FaselHDX] Request: " + mediaType + " " + tmdbId);
       return yield extractStreams(tmdbId, mediaType, season, episode);
     } catch (error) {
-      console.error(`[FaselHDX] Error: ${error.message}`);
+      console.error("[FaselHDX] Error: " + error.message);
       return [];
     }
   });
