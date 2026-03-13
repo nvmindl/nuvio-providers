@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-13T12:33:44.410Z
+ * Generated: 2026-03-13T13:03:50.096Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -24,7 +24,7 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/faselhdx/http.js
-var PROXY_BASE = "https://faselhdx-proxy.vercel.app";
+var PROXY_BASE = "https://faselhdx-proxy.onrender.com";
 var FASEL_DOMAIN = "https://web31312x.faselhdx.top";
 var _baseUrl = FASEL_DOMAIN;
 var HEADERS = {
@@ -33,63 +33,77 @@ var HEADERS = {
   "Accept-Language": "en-US,en;q=0.8"
 };
 var _cfCookies = "";
+var _cfUA = "";
 var _cfAge = 0;
 var CF_TTL = 8 * 60 * 1e3;
 function getBaseUrl() {
   return _baseUrl;
 }
-function ensureCfCookies() {
+function flareSolverr(cmd, url, postData) {
   return __async(this, null, function* () {
-    if (_cfCookies && Date.now() - _cfAge < CF_TTL)
-      return _cfCookies;
-    console.log("[FaselHDX] Fetching CF cookies via proxy...");
+    console.log("[FaselHDX] FlareSolverr " + cmd + ": " + url.substring(0, 80));
     try {
       var controller = new AbortController();
       var tid = setTimeout(function() {
         controller.abort();
-      }, 25e3);
-      var resp = yield fetch(PROXY_BASE + "/api/cookies?domain=web31312x.faselhdx.top", {
+      }, 65e3);
+      var body = { cmd, url, maxTimeout: 6e4 };
+      if (postData)
+        body.postData = postData;
+      var resp = yield fetch(PROXY_BASE + "/v1", {
+        method: "POST",
         signal: controller.signal,
-        headers: { "Accept": "application/json" }
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify(body)
       });
       clearTimeout(tid);
       if (!resp.ok) {
-        console.log("[FaselHDX] Cookie proxy returned " + resp.status);
-        return "";
+        console.log("[FaselHDX] FlareSolverr HTTP " + resp.status);
+        return null;
       }
       var data = yield resp.json();
-      if (data.cookies && data.cookies.length) {
-        _cfCookies = data.cookies.map(function(c) {
+      if (data.status !== "ok" || !data.solution) {
+        console.log("[FaselHDX] FlareSolverr status: " + (data.status || "unknown") + " msg: " + (data.message || ""));
+        return null;
+      }
+      if (data.solution.cookies && data.solution.cookies.length) {
+        _cfCookies = data.solution.cookies.map(function(c) {
           return c.name + "=" + c.value;
         }).join("; ");
         _cfAge = Date.now();
-        console.log("[FaselHDX] Got CF cookies (cached=" + (data.cached || false) + ")");
-        return _cfCookies;
       }
+      if (data.solution.userAgent)
+        _cfUA = data.solution.userAgent;
+      return data.solution;
     } catch (e) {
-      console.log("[FaselHDX] Cookie proxy error: " + e.message);
+      console.log("[FaselHDX] FlareSolverr error: " + e.message);
+      return null;
     }
-    return "";
   });
 }
 function directFetch(url, options) {
   return __async(this, null, function* () {
+    if (!_cfCookies || Date.now() - _cfAge >= CF_TTL)
+      return "";
     options = options || {};
-    var cookies = yield ensureCfCookies();
     var controller;
     var timeoutId;
     try {
       controller = new AbortController();
       timeoutId = setTimeout(function() {
         controller.abort();
-      }, options.timeout || 15e3);
+      }, options.timeout || 12e3);
     } catch (e) {
       controller = null;
     }
     try {
       var hdrs = Object.assign({}, HEADERS, options.headers || {});
-      if (cookies)
-        hdrs["Cookie"] = cookies;
+      hdrs["Cookie"] = _cfCookies;
+      if (_cfUA)
+        hdrs["User-Agent"] = _cfUA;
       var fetchOpts = {
         method: options.method || "GET",
         redirect: "follow",
@@ -112,44 +126,13 @@ function directFetch(url, options) {
     }
   });
 }
-function proxyFetch(url, method, body) {
-  return __async(this, null, function* () {
-    console.log("[FaselHDX] Proxy fetch: " + url.substring(0, 80));
-    try {
-      var controller = new AbortController();
-      var tid = setTimeout(function() {
-        controller.abort();
-      }, 3e4);
-      var proxyUrl = PROXY_BASE + "/api/fetch?url=" + encodeURIComponent(url);
-      if (method === "POST")
-        proxyUrl += "&method=POST";
-      if (body)
-        proxyUrl += "&body=" + encodeURIComponent(body);
-      var resp = yield fetch(proxyUrl, {
-        signal: controller.signal,
-        headers: { "Accept": "application/json" }
-      });
-      clearTimeout(tid);
-      if (!resp.ok)
-        return "";
-      var data = yield resp.json();
-      if (data.cookies && data.cookies.length) {
-        _cfCookies = data.cookies.join("; ");
-        _cfAge = Date.now();
-      }
-      return data.html || "";
-    } catch (e) {
-      console.log("[FaselHDX] Proxy error: " + e.message);
-      return "";
-    }
-  });
-}
 function fetchText(url, options) {
   return __async(this, null, function* () {
     var result = yield directFetch(url, options);
     if (result && result.length > 500)
       return result;
-    return yield proxyFetch(url, "GET", null);
+    var sol = yield flareSolverr("request.get", url);
+    return sol && sol.response ? sol.response : "";
   });
 }
 function fetchPost(url, body, options) {
@@ -165,7 +148,8 @@ function fetchPost(url, body, options) {
     }));
     if (result && result.length > 100)
       return result;
-    return yield proxyFetch(url, "POST", body);
+    var sol = yield flareSolverr("request.post", url, body);
+    return sol && sol.response ? sol.response : "";
   });
 }
 

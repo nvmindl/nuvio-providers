@@ -1,5 +1,5 @@
-// ── PROXY_BASE: set this to your Vercel deployment URL ──
-var PROXY_BASE = 'https://faselhdx-proxy.vercel.app';
+// ── FlareSolverr proxy on Render.com ──
+var PROXY_BASE = 'https://faselhdx-proxy.onrender.com';
 
 var FASEL_DOMAIN = 'https://web31312x.faselhdx.top';
 var _baseUrl = FASEL_DOMAIN;
@@ -10,57 +10,69 @@ export var HEADERS = {
     'Accept-Language': 'en-US,en;q=0.8',
 };
 
-// CF cookie cache
+// CF cookie + UA cache from FlareSolverr
 var _cfCookies = '';
+var _cfUA = '';
 var _cfAge = 0;
 var CF_TTL = 8 * 60 * 1000; // 8 minutes
 
 export function getBaseUrl() { return _baseUrl; }
 export function setBaseUrl(u) { _baseUrl = u; }
-export function getProxyBase() { return PROXY_BASE; }
 
-// ── Get CF clearance cookies via the proxy ──
-async function ensureCfCookies() {
-    if (_cfCookies && (Date.now() - _cfAge) < CF_TTL) return _cfCookies;
-    console.log('[FaselHDX] Fetching CF cookies via proxy...');
+// ── Call FlareSolverr API ──
+async function flareSolverr(cmd, url, postData) {
+    console.log('[FaselHDX] FlareSolverr ' + cmd + ': ' + url.substring(0, 80));
     try {
         var controller = new AbortController();
-        var tid = setTimeout(function() { controller.abort(); }, 25000);
-        var resp = await fetch(PROXY_BASE + '/api/cookies?domain=web31312x.faselhdx.top', {
+        var tid = setTimeout(function() { controller.abort(); }, 65000);
+        var body = { cmd: cmd, url: url, maxTimeout: 60000 };
+        if (postData) body.postData = postData;
+        var resp = await fetch(PROXY_BASE + '/v1', {
+            method: 'POST',
             signal: controller.signal,
-            headers: { 'Accept': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+            },
+            body: JSON.stringify(body),
         });
         clearTimeout(tid);
         if (!resp.ok) {
-            console.log('[FaselHDX] Cookie proxy returned ' + resp.status);
-            return '';
+            console.log('[FaselHDX] FlareSolverr HTTP ' + resp.status);
+            return null;
         }
         var data = await resp.json();
-        if (data.cookies && data.cookies.length) {
-            _cfCookies = data.cookies.map(function(c) { return c.name + '=' + c.value; }).join('; ');
-            _cfAge = Date.now();
-            console.log('[FaselHDX] Got CF cookies (cached=' + (data.cached || false) + ')');
-            return _cfCookies;
+        if (data.status !== 'ok' || !data.solution) {
+            console.log('[FaselHDX] FlareSolverr status: ' + (data.status || 'unknown') + ' msg: ' + (data.message || ''));
+            return null;
         }
+        // Cache cookies and UA for potential direct requests
+        if (data.solution.cookies && data.solution.cookies.length) {
+            _cfCookies = data.solution.cookies.map(function(c) { return c.name + '=' + c.value; }).join('; ');
+            _cfAge = Date.now();
+        }
+        if (data.solution.userAgent) _cfUA = data.solution.userAgent;
+        return data.solution;
     } catch(e) {
-        console.log('[FaselHDX] Cookie proxy error: ' + e.message);
+        console.log('[FaselHDX] FlareSolverr error: ' + e.message);
+        return null;
     }
-    return '';
 }
 
-// ── Direct fetch with CF cookies ──
+// ── Direct fetch with cached CF cookies (fast path) ──
 async function directFetch(url, options) {
+    if (!_cfCookies || (Date.now() - _cfAge) >= CF_TTL) return '';
     options = options || {};
-    var cookies = await ensureCfCookies();
     var controller;
     var timeoutId;
     try {
         controller = new AbortController();
-        timeoutId = setTimeout(function() { controller.abort(); }, options.timeout || 15000);
+        timeoutId = setTimeout(function() { controller.abort(); }, options.timeout || 12000);
     } catch(e) { controller = null; }
     try {
         var hdrs = Object.assign({}, HEADERS, options.headers || {});
-        if (cookies) hdrs['Cookie'] = cookies;
+        hdrs['Cookie'] = _cfCookies;
+        if (_cfUA) hdrs['User-Agent'] = _cfUA;
         var fetchOpts = {
             method: options.method || 'GET',
             redirect: 'follow',
@@ -78,42 +90,15 @@ async function directFetch(url, options) {
     }
 }
 
-// ── Proxy-based fetch (fallback: Puppeteer renders the page) ──
-async function proxyFetch(url, method, body) {
-    console.log('[FaselHDX] Proxy fetch: ' + url.substring(0, 80));
-    try {
-        var controller = new AbortController();
-        var tid = setTimeout(function() { controller.abort(); }, 30000);
-        var proxyUrl = PROXY_BASE + '/api/fetch?url=' + encodeURIComponent(url);
-        if (method === 'POST') proxyUrl += '&method=POST';
-        if (body) proxyUrl += '&body=' + encodeURIComponent(body);
-        var resp = await fetch(proxyUrl, {
-            signal: controller.signal,
-            headers: { 'Accept': 'application/json' },
-        });
-        clearTimeout(tid);
-        if (!resp.ok) return '';
-        var data = await resp.json();
-        // Update cached cookies from proxy response
-        if (data.cookies && data.cookies.length) {
-            _cfCookies = data.cookies.join('; ');
-            _cfAge = Date.now();
-        }
-        return data.html || '';
-    } catch(e) {
-        console.log('[FaselHDX] Proxy error: ' + e.message);
-        return '';
-    }
-}
-
 // ── Public API ──
 
 export async function fetchText(url, options) {
-    // Try direct fetch with CF cookies first (fast)
+    // Try direct fetch with cached CF cookies first (fast)
     var result = await directFetch(url, options);
     if (result && result.length > 500) return result;
-    // Fallback to full proxy fetch (slow but reliable)
-    return await proxyFetch(url, 'GET', null);
+    // Fallback to FlareSolverr (slow but solves CF)
+    var sol = await flareSolverr('request.get', url);
+    return (sol && sol.response) ? sol.response : '';
 }
 
 export async function fetchPost(url, body, options) {
@@ -128,6 +113,7 @@ export async function fetchPost(url, body, options) {
         }),
     }));
     if (result && result.length > 100) return result;
-    // Fallback to proxy
-    return await proxyFetch(url, 'POST', body);
+    // Fallback to FlareSolverr
+    var sol = await flareSolverr('request.post', url, body);
+    return (sol && sol.response) ? sol.response : '';
 }
