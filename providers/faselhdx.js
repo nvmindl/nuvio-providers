@@ -1,10 +1,12 @@
-// src/faselhdx/http.js
-var PROXY_BASE = "https://faselhdx-proxy.onrender.com";
-var HEADERS = {
-  "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-  "Accept": "application/json, text/html, */*",
-  "Accept-Language": "ar,en;q=0.8"
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+
+// src/faselhdx/http.js
 function safeFetch(url, opts) {
   opts = opts || {};
   var ms = opts.timeout || 25e3;
@@ -61,10 +63,19 @@ function resolveId(tmdbId, type) {
     return null;
   });
 }
+var PROXY_BASE, HEADERS;
+var init_http = __esm({
+  "src/faselhdx/http.js"() {
+    PROXY_BASE = "https://faselhdx-proxy.onrender.com";
+    HEADERS = {
+      "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+      "Accept": "application/json, text/html, */*",
+      "Accept-Language": "ar,en;q=0.8"
+    };
+  }
+});
 
 // src/faselhdx/extractor.js
-var PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|vidtube\.one|vidtube\.pro|1vid\.xyz/i;
-var BLOCKED_HOST_RE = /fasel-hd\.cam|faselhd\.cam|faselhd\.center|egybestvid\.com|vidspeed|uqload|dw\.uns/i;
 function sortVideos(videos) {
   var preferred = [];
   var others = [];
@@ -213,15 +224,29 @@ async function extractStreams(tmdbId, mediaType, season, episode) {
     };
   });
 }
+var PREFERRED_HOST_RE, BLOCKED_HOST_RE;
+var init_extractor = __esm({
+  "src/faselhdx/extractor.js"() {
+    init_http();
+    PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|vidtube\.one|vidtube\.pro|1vid\.xyz|fasel-hd\.cam|faselhdx\.best/i;
+    BLOCKED_HOST_RE = /egybestvid\.com|vidspeed|uqload|dw\.uns|liiivideo\.com/i;
+  }
+});
 
 // src/faselhdx/index.js
-async function getStreams(tmdbId, mediaType, season, episode) {
-  try {
-    console.log("[FaselHDX] Request: " + mediaType + " " + tmdbId);
-    return await extractStreams(tmdbId, mediaType, season, episode);
-  } catch (error) {
-    console.error("[FaselHDX] Error: " + error.message);
-    return [];
+var require_faselhdx = __commonJS({
+  "src/faselhdx/index.js"(exports, module) {
+    init_extractor();
+    async function getStreams(tmdbId, mediaType, season, episode) {
+      try {
+        console.log("[FaselHDX] Request: " + mediaType + " " + tmdbId);
+        return await extractStreams(tmdbId, mediaType, season, episode);
+      } catch (error) {
+        console.error("[FaselHDX] Error: " + error.message);
+        return [];
+      }
+    }
+    module.exports = { getStreams };
   }
-}
-module.exports = { getStreams };
+});
+export default require_faselhdx();
