@@ -1,12 +1,12 @@
 {
   "name": "Nuvio Providers",
-  "version": "1.2.0",
+  "version": "5.0.0",
   "scrapers": [
     {
       "id": "FaselHDX",
       "name": "FaselHDX",
       "description": "Arabic streaming from FaselHDX with multi-quality HLS support",
-      "version": "1.2.0",
+      "version": "5.0.0",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",
