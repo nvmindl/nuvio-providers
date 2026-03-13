@@ -61,6 +61,9 @@ function resolveId(tmdbId, type) {
     return null;
   });
 }
+function proxyStream(url) {
+  return PROXY_BASE + "/stream?url=" + encodeURIComponent(url);
+}
 
 // src/faselhdx/extractor.js
 function m3u8urls(text) {
@@ -279,10 +282,14 @@ async function extractStreams(tmdbId, mediaType, season, episode) {
       label = label + " [" + s.lang + "]";
     if (s.quality && s.quality !== "auto")
       label = label + " " + s.quality;
+    var streamUrl = s.url;
+    if (/\.m3u8/i.test(streamUrl)) {
+      streamUrl = proxyStream(streamUrl);
+    }
     return {
       name: "FaselHDX",
       title: label,
-      url: s.url,
+      url: streamUrl,
       quality: s.quality || "auto",
       headers: s.headers || HEADERS
     };

@@ -1,4 +1,4 @@
-import { HEADERS, apiGet, proxyFetch, resolveId } from './http.js';
+import { HEADERS, apiGet, proxyFetch, resolveId, proxyStream } from './http.js';
 
 // ── Helpers ──
 
@@ -258,10 +258,17 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
         var label = s.name || 'FaselHDX';
         if (s.lang) label = label + ' [' + s.lang + ']';
         if (s.quality && s.quality !== 'auto') label = label + ' ' + s.quality;
+
+        // Proxy m3u8 streams through our server — tokens are IP-locked to Render
+        var streamUrl = s.url;
+        if (/\.m3u8/i.test(streamUrl)) {
+            streamUrl = proxyStream(streamUrl);
+        }
+
         return {
             name: 'FaselHDX',
             title: label,
-            url: s.url,
+            url: streamUrl,
             quality: s.quality || 'auto',
             headers: s.headers || HEADERS,
         };

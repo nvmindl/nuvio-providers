@@ -60,3 +60,8 @@ export function resolveId(tmdbId, type) {
             return null;
         });
 }
+
+// Wrap a URL to proxy through our server (for IP-locked HLS streams)
+export function proxyStream(url) {
+    return PROXY_BASE + '/stream?url=' + encodeURIComponent(url);
+}
