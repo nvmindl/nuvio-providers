@@ -140,13 +140,53 @@ async function processVideos(videos) {
     return results;
 }
 
+// Resolve TMDB ID to internal EasyPlex ID via search
+async function resolveInternalId(tmdbId) {
+    // First try direct detail — works if internal ID equals TMDB ID (some instances)
+    var direct = await apiGet('media/detail/' + tmdbId + '/0');
+    if (direct && typeof direct === 'object' && direct.tmdb_id === parseInt(tmdbId, 10)) {
+        console.log('[FaselHDX] Direct match: internal ' + direct.id + ' = TMDB ' + tmdbId);
+        return direct;
+    }
+
+    // Search by TMDB ID as string
+    var searchData = await apiGet('search/' + tmdbId + '/0');
+    var items = [];
+    if (searchData && typeof searchData === 'object') {
+        items = searchData.search || searchData.data || [];
+        if (Array.isArray(searchData)) items = searchData;
+    }
+    for (var i = 0; i < items.length; i++) {
+        if (String(items[i].tmdb_id) === String(tmdbId)) {
+            console.log('[FaselHDX] Search match: internal ' + items[i].id + ' for TMDB ' + tmdbId);
+            return items[i];
+        }
+    }
+
+    // If direct fetch returned data (even wrong TMDB), the instance uses internal IDs
+    // In that case the search-matched item won't have full data, so fetch detail by the found ID
+    console.log('[FaselHDX] No match for TMDB ' + tmdbId + ' (searched ' + items.length + ' results)');
+    return null;
+}
+
 // ── Movie extraction ──
 
 async function extractMovie(tmdbId) {
     console.log('[FaselHDX] Movie TMDB: ' + tmdbId);
-    var data = await apiGet('media/detail/' + tmdbId + '/0');
+
+    var resolved = await resolveInternalId(tmdbId);
+    if (!resolved) return [];
+
+    // If we got a full object with videos already, use it
+    if (resolved.videos && resolved.videos.length) {
+        console.log('[FaselHDX] Movie: ' + (resolved.title || 'untitled') + ' | Videos: ' + resolved.videos.length);
+        return processVideos(resolved.videos);
+    }
+
+    // Otherwise fetch full detail by internal ID
+    var data = await apiGet('media/detail/' + resolved.id + '/0');
     if (!data || typeof data !== 'object' || !data.id) {
-        console.log('[FaselHDX] Movie not found for TMDB ' + tmdbId);
+        console.log('[FaselHDX] Movie detail failed for internal ID ' + resolved.id);
         return [];
     }
 
@@ -161,11 +201,21 @@ async function extractSeries(tmdbId, season, episode) {
     var episodeNum = parseInt(episode, 10);
     console.log('[FaselHDX] Series TMDB: ' + tmdbId + ' S' + seasonNum + 'E' + episodeNum);
 
+    // Resolve TMDB ID to internal ID first
+    var resolved = await resolveInternalId(tmdbId);
+    var internalId = resolved ? resolved.id : tmdbId;
+
     // Step 1: Get series info with season list
-    var seriesData = await apiGet('series/show/' + tmdbId + '/0');
-    if (!seriesData || typeof seriesData !== 'object') {
-        console.log('[FaselHDX] Series not found for TMDB ' + tmdbId);
-        return [];
+    var seriesData = await apiGet('series/show/' + internalId + '/0');
+    if (!seriesData || typeof seriesData === 'string') {
+        // Try with tmdbId directly as fallback
+        if (internalId !== tmdbId) {
+            seriesData = await apiGet('series/show/' + tmdbId + '/0');
+        }
+        if (!seriesData || typeof seriesData === 'string') {
+            console.log('[FaselHDX] Series not found for TMDB ' + tmdbId);
+            return [];
+        }
     }
 
     var seasons = seriesData.seasons || [];
