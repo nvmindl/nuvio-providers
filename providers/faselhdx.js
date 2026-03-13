@@ -41,14 +41,14 @@ function apiGet(path) {
     return null;
   });
 }
-function proxyFetch(embedUrl) {
-  var url = PROXY_BASE + "/embed?url=" + encodeURIComponent(embedUrl);
-  console.log("[FaselHDX] Embed: " + embedUrl.substring(0, 80));
+function extractSources(embedUrl) {
+  var url = PROXY_BASE + "/extract?url=" + encodeURIComponent(embedUrl);
+  console.log("[FaselHDX] Extract: " + embedUrl.substring(0, 80));
   return safeFetch(url, { headers: HEADERS }).then(function(r) {
-    return r.ok ? r.text() : "";
+    return r.ok ? r.json() : { sources: [] };
   }).catch(function(e) {
-    console.log("[FaselHDX] Embed error: " + e.message);
-    return "";
+    console.log("[FaselHDX] Extract error: " + e.message);
+    return { sources: [] };
   });
 }
 function resolveId(tmdbId, type) {
@@ -61,130 +61,53 @@ function resolveId(tmdbId, type) {
     return null;
   });
 }
-function proxyStream(url) {
-  return PROXY_BASE + "/stream?url=" + encodeURIComponent(url);
-}
 
 // src/faselhdx/extractor.js
-function m3u8urls(text) {
-  var out = [], m;
-  var clean = text.replace(/\\\//g, "/");
-  var re = /https?:\/\/[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?/gi;
-  while ((m = re.exec(clean)) !== null)
-    out.push(m[0]);
-  return out.filter(function(v, i, a) {
-    return a.indexOf(v) === i;
-  });
-}
-function mp4urls(text) {
-  var out = [], m;
-  var clean = text.replace(/\\\//g, "/");
-  var re = /https?:\/\/[^\s"'<>]+\.mp4(?:\?[^\s"'<>]*)?/gi;
-  while ((m = re.exec(clean)) !== null)
-    out.push(m[0]);
-  return out.filter(function(v, i, a) {
-    return a.indexOf(v) === i;
-  });
-}
-function iframeUrls(html) {
-  var out = [], m;
-  var re = /<iframe[^>]*(?:data-src|src)\s*=\s*"(https?:\/\/[^"]+)"/gi;
-  while ((m = re.exec(html)) !== null) {
-    if (m[1].indexOf("youtube") < 0 && m[1].indexOf("google") < 0)
-      out.push(m[1]);
-  }
-  return out.filter(function(v, i, a) {
-    return a.indexOf(v) === i;
-  });
-}
-function extractUrlsFromHtml(html) {
-  var streams = [];
-  var m3 = m3u8urls(html);
-  for (var i = 0; i < m3.length; i++) {
-    streams.push({ url: m3[i], quality: "auto", type: "m3u8" });
-  }
-  var mp4 = mp4urls(html);
-  for (var j = 0; j < mp4.length; j++) {
-    var q = "auto";
-    if (/1080/.test(mp4[j]))
-      q = "1080p";
-    else if (/720/.test(mp4[j]))
-      q = "720p";
-    else if (/480/.test(mp4[j]))
-      q = "480p";
-    streams.push({ url: mp4[j], quality: q, type: "mp4" });
-  }
-  return streams;
-}
-async function resolveEmbed(embedUrl) {
-  var html = await proxyFetch(embedUrl);
-  if (!html)
-    return [];
-  var streams = extractUrlsFromHtml(html);
-  if (streams.length)
-    return streams;
-  var nested = iframeUrls(html);
-  for (var k = 0; k < nested.length && k < 3; k++) {
-    var inner = await proxyFetch(nested[k]);
-    if (inner) {
-      var innerStreams = extractUrlsFromHtml(inner);
-      if (innerStreams.length)
-        return innerStreams;
+var PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|vidtube\.pro/i;
+var BLOCKED_HOST_RE = /fasel-hd\.cam|faselhd\.cam|faselhd\.center|egybestvid\.com/i;
+function sortVideos(videos) {
+  var preferred = [];
+  var others = [];
+  for (var i = 0; i < videos.length; i++) {
+    var link = videos[i].link || "";
+    if (!link)
+      continue;
+    if (BLOCKED_HOST_RE.test(link))
+      continue;
+    if (PREFERRED_HOST_RE.test(link)) {
+      preferred.push(videos[i]);
+    } else {
+      others.push(videos[i]);
     }
   }
-  return [];
+  return preferred.concat(others);
 }
 async function processVideos(videos) {
   if (!videos || !videos.length)
     return [];
+  var sorted = sortVideos(videos);
   var results = [];
-  for (var i = 0; i < videos.length; i++) {
-    var v = videos[i];
+  for (var i = 0; i < sorted.length; i++) {
+    var v = sorted[i];
     var link = v.link || "";
     if (!link)
       continue;
     var serverName = (v.server || "Server " + (i + 1)).trim();
     var lang = v.lang || "";
-    var streamHeaders = {};
-    streamHeaders["User-Agent"] = v.useragent || HEADERS["User-Agent"];
-    if (v.header)
-      streamHeaders["Referer"] = v.header;
-    if (/fasel-hd\.cam|faselhd\.cam|faselhd\.center/i.test(link)) {
-      console.log("[FaselHDX] Skipping CF-blocked: " + serverName);
-      continue;
-    }
-    if (/embed|uqload|vidspeed|dood|mixdrop|streamtape|upstream|mp4upload|egybestvid|vidoba|aflam/i.test(link) || v.supported_hosts === 1) {
-      var embedded = await resolveEmbed(link);
-      for (var j = 0; j < embedded.length; j++) {
-        results.push({
-          url: embedded[j].url,
-          quality: embedded[j].quality,
-          name: serverName,
-          lang,
-          headers: streamHeaders
-        });
-      }
-      continue;
-    }
-    if (v.hls === 1 || /\.m3u8/i.test(link)) {
+    var data = await extractSources(link);
+    var sources = data && data.sources ? data.sources : [];
+    for (var j = 0; j < sources.length; j++) {
+      var s = sources[j];
       results.push({
-        url: link,
-        quality: "auto",
+        url: s.url,
+        quality: s.quality || "auto",
+        type: s.type || "mp4",
         name: serverName,
-        lang,
-        headers: streamHeaders
-      });
-      continue;
-    }
-    if (/\.mp4/i.test(link) || /\.m3u8/i.test(link)) {
-      results.push({
-        url: link,
-        quality: "auto",
-        name: serverName,
-        lang,
-        headers: streamHeaders
+        lang
       });
     }
+    if (results.length >= 6)
+      break;
   }
   return results;
 }
@@ -282,16 +205,11 @@ async function extractStreams(tmdbId, mediaType, season, episode) {
       label = label + " [" + s.lang + "]";
     if (s.quality && s.quality !== "auto")
       label = label + " " + s.quality;
-    var streamUrl = s.url;
-    if (/\.m3u8/i.test(streamUrl)) {
-      streamUrl = proxyStream(streamUrl);
-    }
     return {
       name: "FaselHDX",
       title: label,
-      url: streamUrl,
-      quality: s.quality || "auto",
-      headers: s.headers || HEADERS
+      url: s.url,
+      quality: s.quality || "auto"
     };
   });
 }

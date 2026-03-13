@@ -1,4 +1,4 @@
-// FaselHDX v5.0.0 — EasyPlex API client
+// FaselHDX v6.0.0 — EasyPlex API client
 var PROXY_BASE = 'https://faselhdx-proxy.onrender.com';
 
 export var HEADERS = {
@@ -24,7 +24,6 @@ function safeFetch(url, opts) {
 }
 
 // Fetch JSON from EasyPlex API via proxy
-// path examples: "media/detail/550/0", "series/show/1396/0", "series/season/123/0"
 export function apiGet(path) {
     var url = PROXY_BASE + '/api/' + path;
     console.log('[FaselHDX] API: ' + url.substring(0, 120));
@@ -48,8 +47,20 @@ export function proxyFetch(embedUrl) {
         });
 }
 
+// Extract video sources from embed page via proxy /extract endpoint
+// Returns { sources: [{url, quality, type}] }
+export function extractSources(embedUrl) {
+    var url = PROXY_BASE + '/extract?url=' + encodeURIComponent(embedUrl);
+    console.log('[FaselHDX] Extract: ' + embedUrl.substring(0, 80));
+    return safeFetch(url, { headers: HEADERS })
+        .then(function(r) { return r.ok ? r.json() : { sources: [] }; })
+        .catch(function(e) {
+            console.log('[FaselHDX] Extract error: ' + e.message);
+            return { sources: [] };
+        });
+}
+
 // Resolve TMDB ID to internal EasyPlex ID via proxy
-// type: "movie" or "tv"
 export function resolveId(tmdbId, type) {
     var url = PROXY_BASE + '/resolve/' + type + '/' + tmdbId;
     console.log('[FaselHDX] Resolve: ' + type + ' ' + tmdbId);
@@ -59,9 +70,4 @@ export function resolveId(tmdbId, type) {
             console.log('[FaselHDX] Resolve error: ' + e.message);
             return null;
         });
-}
-
-// Wrap a URL to proxy through our server (for IP-locked HLS streams)
-export function proxyStream(url) {
-    return PROXY_BASE + '/stream?url=' + encodeURIComponent(url);
 }
