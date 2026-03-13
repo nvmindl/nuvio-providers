@@ -10,9 +10,9 @@ async function tmdbTitle(tmdbId, mediaType) {
     var k = tmdbId + mediaType;
     if (_cache[k]) return _cache[k];
     var path = mediaType === 'movie' ? 'movie' : 'tv';
-    var r = await fetch(TMDB + '/' + path + '/' + tmdbId + '?api_key=' + TMDB_KEY, {
-        headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000),
-    });
+    var opts = { headers: { 'Accept': 'application/json' } };
+    try { if (AbortSignal.timeout) opts.signal = AbortSignal.timeout(8000); } catch(e) {}
+    var r = await fetch(TMDB + '/' + path + '/' + tmdbId + '?api_key=' + TMDB_KEY, opts);
     if (!r.ok) throw new Error('TMDB ' + r.status);
     var d = await r.json();
     var title = mediaType === 'tv' ? (d.name || '') : (d.title || '');
@@ -162,7 +162,15 @@ function runQualityScript(script, base) {
         var fn = new Function('document','navigator','location','console','$','jQuery','Cookies','atob','btoa','setTimeout','setInterval','clearTimeout','clearInterval','parseInt','parseFloat','isNaN','String','Number','Array','Object','Boolean','RegExp','Error','Math','Date','JSON','encodeURIComponent','decodeURIComponent','window','self','globalThis','Function', script);
         var w = {};
         fn.call(w, doc, {userAgent:'Mozilla/5.0'}, {href:base,hostname:host}, {log:noop,warn:noop,error:noop}, mock$, mock$, {get:function(){return null;},set:noop}, atob, function(){return '';}, noop, noop, noop, noop, parseInt, parseFloat, isNaN, String, Number, Array, Object, Boolean, RegExp, Error, Math, Date, JSON, encodeURIComponent, decodeURIComponent, w, w, w, undefined);
-    } catch(e) { /* sandbox error */ }
+    } catch(e) {
+        // new Function() may be blocked on iOS — try eval as fallback
+        try {
+            var w2 = {};
+            var evalCode = '(function(document,navigator,location,console,$,jQuery,Cookies,atob,btoa,setTimeout,setInterval,clearTimeout,clearInterval){' + script + '})';
+            var evalFn = (0, eval)(evalCode);
+            evalFn(doc, {userAgent:'Mozilla/5.0'}, {href:base,hostname:host}, {log:noop,warn:noop,error:noop}, mock$, mock$, {get:function(){return null;},set:noop}, atob, function(){return '';}, noop, noop, noop, noop);
+        } catch(e2) { /* both sandbox methods failed */ }
+    }
     return captured;
 }
 

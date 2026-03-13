@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-13T11:28:49.257Z
+ * Generated: 2026-03-13T11:34:44.684Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -26,17 +26,37 @@ var __async = (__this, __arguments, generator) => {
 // src/faselhdx/http.js
 var BASE = "https://www.faselhds.biz";
 var HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+  "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.8"
 };
 function getBaseUrl() {
   return BASE;
 }
+function makeSignal(ms) {
+  try {
+    if (typeof AbortSignal !== "undefined" && AbortSignal.timeout)
+      return AbortSignal.timeout(ms);
+  } catch (e) {
+  }
+  try {
+    var c = new AbortController();
+    setTimeout(function() {
+      c.abort();
+    }, ms);
+    return c.signal;
+  } catch (e) {
+  }
+  return void 0;
+}
 function fetchText(url, extra) {
   return __async(this, null, function* () {
     var h = Object.assign({}, HEADERS, extra || {});
-    var r = yield fetch(url, { headers: h, redirect: "follow", signal: AbortSignal.timeout(12e3) });
+    var opts = { headers: h, redirect: "follow" };
+    var sig = makeSignal(12e3);
+    if (sig)
+      opts.signal = sig;
+    var r = yield fetch(url, opts);
     if (!r.ok)
       throw new Error("HTTP " + r.status);
     return r.text();
@@ -48,7 +68,11 @@ function fetchPost(url, body, extra) {
       "Content-Type": "application/x-www-form-urlencoded",
       "X-Requested-With": "XMLHttpRequest"
     }, extra || {});
-    var r = yield fetch(url, { method: "POST", headers: h, body, redirect: "follow", signal: AbortSignal.timeout(12e3) });
+    var opts = { method: "POST", headers: h, body, redirect: "follow" };
+    var sig = makeSignal(12e3);
+    if (sig)
+      opts.signal = sig;
+    var r = yield fetch(url, opts);
     if (!r.ok)
       throw new Error("HTTP " + r.status);
     return r.text();
@@ -65,10 +89,13 @@ function tmdbTitle(tmdbId, mediaType) {
     if (_cache[k])
       return _cache[k];
     var path = mediaType === "movie" ? "movie" : "tv";
-    var r = yield fetch(TMDB + "/" + path + "/" + tmdbId + "?api_key=" + TMDB_KEY, {
-      headers: { "Accept": "application/json" },
-      signal: AbortSignal.timeout(8e3)
-    });
+    var opts = { headers: { "Accept": "application/json" } };
+    try {
+      if (AbortSignal.timeout)
+        opts.signal = AbortSignal.timeout(8e3);
+    } catch (e) {
+    }
+    var r = yield fetch(TMDB + "/" + path + "/" + tmdbId + "?api_key=" + TMDB_KEY, opts);
     if (!r.ok)
       throw new Error("TMDB " + r.status);
     var d = yield r.json();
@@ -261,6 +288,17 @@ function runQualityScript(script, base) {
       return "";
     }, noop, noop, noop, noop, parseInt, parseFloat, isNaN, String, Number, Array, Object, Boolean, RegExp, Error, Math, Date, JSON, encodeURIComponent, decodeURIComponent, w, w, w, void 0);
   } catch (e) {
+    try {
+      var w2 = {};
+      var evalCode = "(function(document,navigator,location,console,$,jQuery,Cookies,atob,btoa,setTimeout,setInterval,clearTimeout,clearInterval){" + script + "})";
+      var evalFn = (0, eval)(evalCode);
+      evalFn(doc, { userAgent: "Mozilla/5.0" }, { href: base, hostname: host }, { log: noop, warn: noop, error: noop }, mock$, mock$, { get: function() {
+        return null;
+      }, set: noop }, atob, function() {
+        return "";
+      }, noop, noop, noop, noop);
+    } catch (e2) {
+    }
   }
   return captured;
 }
