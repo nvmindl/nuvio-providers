@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-13T10:38:33.021Z
+ * Generated: 2026-03-13T11:19:57.291Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -43,11 +43,12 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/faselhdx/http.js
+var PRIMARY_URL = "https://www.faselhds.biz";
 var CANONICAL_URLS = ["https://www.faselhd.club", "https://www.fasel-hd.cam"];
-var DOMAIN_RE = /^(https?:\/\/web\d+x\.faselhdx\.\w+)/i;
+var LEGACY_DOMAIN_RE = /^(https?:\/\/web\d+x\.faselhdx\.\w+)/i;
 var _resolvedBase = "";
 var HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
+  "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.8"
 };
@@ -55,46 +56,62 @@ function resolveBaseUrl() {
   return __async(this, null, function* () {
     if (_resolvedBase)
       return _resolvedBase;
+    try {
+      var pr = yield fetch(PRIMARY_URL + "/", {
+        method: "HEAD",
+        redirect: "follow",
+        headers: HEADERS,
+        signal: AbortSignal.timeout(1e4)
+      });
+      if (pr.status < 500) {
+        _resolvedBase = PRIMARY_URL;
+        console.log("[FaselHDX] Using primary domain: " + _resolvedBase);
+        return _resolvedBase;
+      }
+    } catch (e) {
+      console.log("[FaselHDX] Primary domain unreachable: " + (e.cause && e.cause.code || e.message));
+    }
     for (var c = 0; c < CANONICAL_URLS.length; c++) {
       try {
         var url = CANONICAL_URLS[c];
         for (var i = 0; i < 5; i++) {
-          var m = url.match(DOMAIN_RE);
+          var m = url.match(LEGACY_DOMAIN_RE);
           if (m) {
             _resolvedBase = m[1];
-            console.log("[FaselHDX] Resolved domain: " + _resolvedBase);
-            return _resolvedBase;
+            break;
           }
           var resp = yield fetch(url, {
             method: "HEAD",
             redirect: "manual",
-            headers: HEADERS
+            headers: HEADERS,
+            signal: AbortSignal.timeout(8e3)
           });
           var location = resp.headers.get("location");
           if (location) {
             url = location;
             continue;
           }
-          var finalUrl = resp.url || "";
-          var mf = finalUrl.match(DOMAIN_RE);
+          var mf = (resp.url || "").match(LEGACY_DOMAIN_RE);
           if (mf) {
             _resolvedBase = mf[1];
-            console.log("[FaselHDX] Resolved domain: " + _resolvedBase);
-            return _resolvedBase;
+            break;
           }
           break;
         }
-        var ml = url.match(DOMAIN_RE);
-        if (ml) {
-          _resolvedBase = ml[1];
-          console.log("[FaselHDX] Resolved domain: " + _resolvedBase);
+        if (!_resolvedBase) {
+          var ml = url.match(LEGACY_DOMAIN_RE);
+          if (ml)
+            _resolvedBase = ml[1];
+        }
+        if (_resolvedBase) {
+          console.log("[FaselHDX] Resolved via redirect: " + _resolvedBase);
           return _resolvedBase;
         }
       } catch (e) {
-        console.log("[FaselHDX] Domain resolve error (" + CANONICAL_URLS[c] + "): " + e.message);
+        console.log("[FaselHDX] Redirect resolve error (" + CANONICAL_URLS[c] + "): " + e.message);
       }
     }
-    _resolvedBase = "https://web3136x.faselhdx.top";
+    _resolvedBase = PRIMARY_URL;
     console.log("[FaselHDX] Using fallback domain: " + _resolvedBase);
     return _resolvedBase;
   });
@@ -102,36 +119,22 @@ function resolveBaseUrl() {
 function fetchText(url, options) {
   return __async(this, null, function* () {
     options = options || {};
-    var controller;
-    var timeoutId;
+    var fetchOpts = {
+      redirect: "follow",
+      headers: __spreadValues(__spreadValues({}, HEADERS), options.headers || {})
+    };
     try {
-      controller = new AbortController();
-      timeoutId = setTimeout(function() {
-        controller.abort();
-      }, 12e3);
+      fetchOpts.signal = AbortSignal.timeout(15e3);
     } catch (e) {
-      controller = null;
     }
-    var response;
-    try {
-      var fetchOpts = {
-        redirect: "follow",
-        headers: __spreadValues(__spreadValues({}, HEADERS), options.headers || {})
-      };
-      if (controller)
-        fetchOpts.signal = controller.signal;
-      response = yield fetch(url, fetchOpts);
-    } catch (fetchErr) {
-      if (timeoutId)
-        clearTimeout(timeoutId);
-      throw fetchErr;
-    }
-    if (timeoutId)
-      clearTimeout(timeoutId);
+    var response = yield fetch(url, fetchOpts);
     if (!response.ok) {
       throw new Error("HTTP " + response.status + " for " + url);
     }
     var text = yield response.text();
+    if (text.includes("Just a moment") && text.includes("challenge-platform")) {
+      throw new Error("CF challenge for " + url);
+    }
     return text;
   });
 }
@@ -170,11 +173,12 @@ function resolveTmdbMeta(tmdbId, mediaType) {
     return result;
   });
 }
+var CONTENT_PATH_RE = /href="(https?:\/\/[^"]+\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\/[^"]+)"/gi;
 function extractSearchUrls(html) {
   var urls = [];
-  var re = /href="(https?:\/\/web\d+x\.faselhdx\.\w+\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\/[^"]+)"/gi;
   var m;
-  while ((m = re.exec(html)) !== null) {
+  CONTENT_PATH_RE.lastIndex = 0;
+  while ((m = CONTENT_PATH_RE.exec(html)) !== null) {
     if (m[1])
       urls.push(m[1]);
   }
@@ -184,20 +188,41 @@ function searchCandidates(query, baseUrl) {
   return __async(this, null, function* () {
     if (!query)
       return [];
-    var ajaxUrl = baseUrl + "/wp-admin/admin-ajax.php";
-    var response = yield fetch(ajaxUrl, {
-      method: "POST",
-      headers: __spreadProps(__spreadValues({}, HEADERS), {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "X-Requested-With": "XMLHttpRequest",
-        Referer: baseUrl + "/main"
-      }),
-      body: "action=dtc_live&trsearch=" + encodeURIComponent(query)
-    });
-    if (!response.ok)
-      return [];
-    var html = yield response.text();
-    return extractSearchUrls(html);
+    var html = "";
+    try {
+      var ajaxUrl = baseUrl + "/wp-admin/admin-ajax.php";
+      var response = yield fetch(ajaxUrl, {
+        method: "POST",
+        headers: __spreadProps(__spreadValues({}, HEADERS), {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-Requested-With": "XMLHttpRequest",
+          Referer: baseUrl + "/"
+        }),
+        body: "action=dtc_live&trsearch=" + encodeURIComponent(query),
+        signal: AbortSignal.timeout(12e3)
+      });
+      if (response.ok)
+        html = yield response.text();
+    } catch (e) {
+      console.log("[FaselHDX] AJAX search failed: " + e.message);
+    }
+    var results = extractSearchUrls(html);
+    if (results.length > 0)
+      return results;
+    try {
+      var searchUrl = baseUrl + "/?s=" + encodeURIComponent(query);
+      var resp2 = yield fetch(searchUrl, {
+        headers: HEADERS,
+        signal: AbortSignal.timeout(12e3)
+      });
+      if (resp2.ok) {
+        html = yield resp2.text();
+        results = extractSearchUrls(html);
+      }
+    } catch (e) {
+      console.log("[FaselHDX] Standard search failed: " + e.message);
+    }
+    return results;
   });
 }
 function scoreCandidate(url, mediaType, season, episode, title, year) {
@@ -444,7 +469,7 @@ function executeQualityScript(scriptContent, baseUrl) {
     }
     return r;
   };
-  var hostname = "web380x.faselhdx.best";
+  var hostname = "www.faselhds.biz";
   try {
     hostname = baseUrl.replace(/^https?:\/\//, "");
   } catch (e) {

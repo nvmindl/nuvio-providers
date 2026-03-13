@@ -43,11 +43,14 @@ async function resolveTmdbMeta(tmdbId, mediaType) {
 }
 
 // Extract content URLs from search HTML using regex (much faster than cheerio on 120KB pages)
+// Match content URLs from both new domain (faselhds.biz) and legacy (web*x.faselhdx.*)
+var CONTENT_PATH_RE = /href="(https?:\/\/[^"]+\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\/[^"]+)"/gi;
+
 function extractSearchUrls(html) {
     var urls = [];
-    var re = /href="(https?:\/\/web\d+x\.faselhdx\.\w+\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\/[^"]+)"/gi;
     var m;
-    while ((m = re.exec(html)) !== null) {
+    CONTENT_PATH_RE.lastIndex = 0;
+    while ((m = CONTENT_PATH_RE.exec(html)) !== null) {
         if (m[1]) urls.push(m[1]);
     }
     return unique(urls);
@@ -55,20 +58,46 @@ function extractSearchUrls(html) {
 
 async function searchCandidates(query, baseUrl) {
     if (!query) return [];
-    var ajaxUrl = baseUrl + '/wp-admin/admin-ajax.php';
-    var response = await fetch(ajaxUrl, {
-        method: 'POST',
-        headers: {
-            ...HEADERS,
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'X-Requested-With': 'XMLHttpRequest',
-            Referer: baseUrl + '/main',
-        },
-        body: 'action=dtc_live&trsearch=' + encodeURIComponent(query),
-    });
-    if (!response.ok) return [];
-    var html = await response.text();
-    return extractSearchUrls(html);
+
+    // Try AJAX search first, fall back to standard WordPress search
+    var html = '';
+    try {
+        var ajaxUrl = baseUrl + '/wp-admin/admin-ajax.php';
+        var response = await fetch(ajaxUrl, {
+            method: 'POST',
+            headers: {
+                ...HEADERS,
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest',
+                Referer: baseUrl + '/',
+            },
+            body: 'action=dtc_live&trsearch=' + encodeURIComponent(query),
+            signal: AbortSignal.timeout(12000),
+        });
+        if (response.ok) html = await response.text();
+    } catch (e) {
+        console.log('[FaselHDX] AJAX search failed: ' + e.message);
+    }
+
+    var results = extractSearchUrls(html);
+    if (results.length > 0) return results;
+
+    // Fallback: standard search page
+    try {
+        var searchUrl = baseUrl + '/?s=' + encodeURIComponent(query);
+        var resp2 = await fetch(searchUrl, {
+            headers: HEADERS,
+            signal: AbortSignal.timeout(12000),
+        });
+        if (resp2.ok) {
+            html = await resp2.text();
+            results = extractSearchUrls(html);
+        }
+    } catch (e) {
+        console.log('[FaselHDX] Standard search failed: ' + e.message);
+    }
+
+    return results;
 }
 
 function scoreCandidate(url, mediaType, season, episode, title, year) {
@@ -282,7 +311,7 @@ function executeQualityScript(scriptContent, baseUrl) {
         return r;
     };
 
-    var hostname = 'web380x.faselhdx.best';
+    var hostname = 'www.faselhds.biz';
     try { hostname = baseUrl.replace(/^https?:\/\//, ''); } catch(e) {}
 
     var scopeEntries = [
