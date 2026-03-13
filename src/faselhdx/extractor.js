@@ -84,34 +84,14 @@ async function processVideos(videos) {
         streamHeaders['User-Agent'] = v.useragent || HEADERS['User-Agent'];
         if (v.header) streamHeaders['Referer'] = v.header;
 
-        // Direct HLS link from fasel-hd.cam or similar
-        if (v.hls === 1 || /\.m3u8/i.test(link)) {
-            // fasel-hd.cam links need to be fetched to get the actual m3u8
-            if (/fasel-hd|faselhd/i.test(link)) {
-                var resolved = await resolveEmbed(link);
-                for (var r = 0; r < resolved.length; r++) {
-                    results.push({
-                        url: resolved[r].url,
-                        quality: resolved[r].quality,
-                        name: serverName,
-                        lang: lang,
-                        headers: streamHeaders,
-                    });
-                }
-            } else {
-                results.push({
-                    url: link,
-                    quality: 'auto',
-                    name: serverName,
-                    lang: lang,
-                    headers: streamHeaders,
-                });
-            }
+        // Skip fasel-hd.cam — it's behind Cloudflare, unusable
+        if (/fasel-hd\.cam|faselhd\.cam|faselhd\.center/i.test(link)) {
+            console.log('[FaselHDX] Skipping CF-blocked: ' + serverName);
             continue;
         }
 
-        // Embed URLs (uqload, vidspeed, etc) — resolve to get direct stream
-        if (v.supported_hosts === 1 || /embed|uqload|vidspeed|dood|mixdrop|streamtape|upstream|mp4upload/i.test(link)) {
+        // Embed URLs — resolve to get direct stream
+        if (/embed|uqload|vidspeed|dood|mixdrop|streamtape|upstream|mp4upload|egybestvid|vidoba|aflam/i.test(link) || v.supported_hosts === 1) {
             var embedded = await resolveEmbed(link);
             for (var j = 0; j < embedded.length; j++) {
                 results.push({
@@ -122,6 +102,18 @@ async function processVideos(videos) {
                     headers: streamHeaders,
                 });
             }
+            continue;
+        }
+
+        // Direct HLS link
+        if (v.hls === 1 || /\.m3u8/i.test(link)) {
+            results.push({
+                url: link,
+                quality: 'auto',
+                name: serverName,
+                lang: lang,
+                headers: streamHeaders,
+            });
             continue;
         }
 
