@@ -1,4 +1,4 @@
-import { HEADERS, fetchText, fetchPost, getBaseUrl, setBaseUrl, getDomains } from './http.js';
+import { HEADERS, fetchText, fetchPost, getBaseUrl, setBaseUrl } from './http.js';
 
 var TMDB_KEY = '439c478a771f35c05022f9feabcca01c';
 var TMDB = 'https://api.themoviedb.org/3';
@@ -217,63 +217,58 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
     console.log('[FaselHDX] Title: ' + meta.title + ' (' + meta.year + ')');
 
-    // Try each domain until we find results
-    var domains = getDomains();
-    for (var d = 0; d < domains.length; d++) {
-        var base = domains[d];
-        setBaseUrl(base);
-        console.log('[FaselHDX] Trying domain: ' + base);
+    var base = getBaseUrl();
+    console.log('[FaselHDX] Using domain: ' + base);
 
-        var urls = await search(meta.title, base);
-        if (!urls.length && meta.year) urls = await search(meta.title + ' ' + meta.year, base);
-        if (!urls.length) {
-            console.log('[FaselHDX] No search results from ' + base);
-            continue;
-        }
+    var urls = await search(meta.title, base);
+    if (!urls.length && meta.year) urls = await search(meta.title + ' ' + meta.year, base);
+    if (!urls.length) {
+        console.log('[FaselHDX] No search results');
+        return [];
+    }
 
-        var pageUrl = pickBest(urls, mediaType, meta.title);
-        if (!pageUrl) {
-            console.log('[FaselHDX] No matching page');
-            continue;
-        }
-        console.log('[FaselHDX] Page: ' + pageUrl);
+    var pageUrl = pickBest(urls, mediaType, meta.title);
+    if (!pageUrl) {
+        console.log('[FaselHDX] No matching page');
+        return [];
+    }
+    console.log('[FaselHDX] Page: ' + pageUrl);
 
-        // For TV: resolve to specific episode
-        if (mediaType === 'tv' && season && episode && /\/(series|seasons|anime)\//.test(pageUrl)) {
-            var epUrl = await resolveEpisode(pageUrl, season, episode, base);
-            if (epUrl) pageUrl = epUrl;
-            console.log('[FaselHDX] Episode URL: ' + pageUrl);
-        }
+    // For TV: resolve to specific episode
+    if (mediaType === 'tv' && season && episode && /\/(series|seasons|anime)\//.test(pageUrl)) {
+        var epUrl = await resolveEpisode(pageUrl, season, episode, base);
+        if (epUrl) pageUrl = epUrl;
+        console.log('[FaselHDX] Episode URL: ' + pageUrl);
+    }
 
-        // Fetch the content page and find player iframes
-        var html = await fetchText(pageUrl, { headers: { Referer: base + '/' } });
-        if (!html) {
-            console.log('[FaselHDX] Empty page response');
-            continue;
-        }
-        var players = playerUrls(html);
-        console.log('[FaselHDX] Found ' + players.length + ' players');
-        if (!players.length) continue;
+    // Fetch the content page and find player iframes
+    var html = await fetchText(pageUrl, { headers: { Referer: base + '/' } });
+    if (!html) {
+        console.log('[FaselHDX] Empty page response');
+        return [];
+    }
+    var players = playerUrls(html);
+    console.log('[FaselHDX] Found ' + players.length + ' players');
+    if (!players.length) return [];
 
-        // Extract streams from first working player
-        for (var i = 0; i < players.length; i++) {
-            var streams = await extractFromPlayer(players[i], pageUrl, base);
-            if (streams.length) {
-                console.log('[FaselHDX] Got ' + streams.length + ' streams');
-                var ref = { Referer: base + '/', Origin: base };
-                return streams.map(function(s) {
-                    return {
-                        name: 'FaselHDX - ' + (s.quality === 'auto' ? 'Auto' : s.quality),
-                        title: s.quality === 'auto' ? 'Auto' : s.quality,
-                        url: s.url,
-                        quality: s.quality === 'auto' ? 'Auto' : s.quality,
-                        headers: Object.assign({}, HEADERS, ref),
-                    };
-                });
-            }
+    // Extract streams from first working player
+    for (var i = 0; i < players.length; i++) {
+        var streams = await extractFromPlayer(players[i], pageUrl, base);
+        if (streams.length) {
+            console.log('[FaselHDX] Got ' + streams.length + ' streams');
+            var ref = { Referer: base + '/', Origin: base };
+            return streams.map(function(s) {
+                return {
+                    name: 'FaselHDX - ' + (s.quality === 'auto' ? 'Auto' : s.quality),
+                    title: s.quality === 'auto' ? 'Auto' : s.quality,
+                    url: s.url,
+                    quality: s.quality === 'auto' ? 'Auto' : s.quality,
+                    headers: Object.assign({}, HEADERS, ref),
+                };
+            });
         }
     }
 
-    console.log('[FaselHDX] No streams found from any domain');
+    console.log('[FaselHDX] No streams found');
     return [];
 }

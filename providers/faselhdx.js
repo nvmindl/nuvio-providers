@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-13T11:58:44.017Z
+ * Generated: 2026-03-13T12:33:44.410Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -24,22 +24,58 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/faselhdx/http.js
-var DOMAINS = ["https://www.fasel-hd.cam", "https://www.faselhds.biz"];
-var _baseUrl = DOMAINS[0];
+var PROXY_BASE = "https://faselhdx-proxy.vercel.app";
+var FASEL_DOMAIN = "https://web31312x.faselhdx.top";
+var _baseUrl = FASEL_DOMAIN;
 var HEADERS = {
   "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.8"
 };
-function setBaseUrl(u) {
-  _baseUrl = u;
+var _cfCookies = "";
+var _cfAge = 0;
+var CF_TTL = 8 * 60 * 1e3;
+function getBaseUrl() {
+  return _baseUrl;
 }
-function getDomains() {
-  return DOMAINS;
+function ensureCfCookies() {
+  return __async(this, null, function* () {
+    if (_cfCookies && Date.now() - _cfAge < CF_TTL)
+      return _cfCookies;
+    console.log("[FaselHDX] Fetching CF cookies via proxy...");
+    try {
+      var controller = new AbortController();
+      var tid = setTimeout(function() {
+        controller.abort();
+      }, 25e3);
+      var resp = yield fetch(PROXY_BASE + "/api/cookies?domain=web31312x.faselhdx.top", {
+        signal: controller.signal,
+        headers: { "Accept": "application/json" }
+      });
+      clearTimeout(tid);
+      if (!resp.ok) {
+        console.log("[FaselHDX] Cookie proxy returned " + resp.status);
+        return "";
+      }
+      var data = yield resp.json();
+      if (data.cookies && data.cookies.length) {
+        _cfCookies = data.cookies.map(function(c) {
+          return c.name + "=" + c.value;
+        }).join("; ");
+        _cfAge = Date.now();
+        console.log("[FaselHDX] Got CF cookies (cached=" + (data.cached || false) + ")");
+        return _cfCookies;
+      }
+    } catch (e) {
+      console.log("[FaselHDX] Cookie proxy error: " + e.message);
+    }
+    return "";
+  });
 }
-function fetchText(url, options) {
+function directFetch(url, options) {
   return __async(this, null, function* () {
     options = options || {};
+    var cookies = yield ensureCfCookies();
     var controller;
     var timeoutId;
     try {
@@ -51,10 +87,16 @@ function fetchText(url, options) {
       controller = null;
     }
     try {
+      var hdrs = Object.assign({}, HEADERS, options.headers || {});
+      if (cookies)
+        hdrs["Cookie"] = cookies;
       var fetchOpts = {
+        method: options.method || "GET",
         redirect: "follow",
-        headers: Object.assign({}, HEADERS, options.headers || {})
+        headers: hdrs
       };
+      if (options.body)
+        fetchOpts.body = options.body;
       if (controller)
         fetchOpts.signal = controller.signal;
       var response = yield fetch(url, fetchOpts);
@@ -66,48 +108,64 @@ function fetchText(url, options) {
     } catch (e) {
       if (timeoutId)
         clearTimeout(timeoutId);
-      console.log("[FaselHDX] fetch error: " + e.message);
       return "";
     }
+  });
+}
+function proxyFetch(url, method, body) {
+  return __async(this, null, function* () {
+    console.log("[FaselHDX] Proxy fetch: " + url.substring(0, 80));
+    try {
+      var controller = new AbortController();
+      var tid = setTimeout(function() {
+        controller.abort();
+      }, 3e4);
+      var proxyUrl = PROXY_BASE + "/api/fetch?url=" + encodeURIComponent(url);
+      if (method === "POST")
+        proxyUrl += "&method=POST";
+      if (body)
+        proxyUrl += "&body=" + encodeURIComponent(body);
+      var resp = yield fetch(proxyUrl, {
+        signal: controller.signal,
+        headers: { "Accept": "application/json" }
+      });
+      clearTimeout(tid);
+      if (!resp.ok)
+        return "";
+      var data = yield resp.json();
+      if (data.cookies && data.cookies.length) {
+        _cfCookies = data.cookies.join("; ");
+        _cfAge = Date.now();
+      }
+      return data.html || "";
+    } catch (e) {
+      console.log("[FaselHDX] Proxy error: " + e.message);
+      return "";
+    }
+  });
+}
+function fetchText(url, options) {
+  return __async(this, null, function* () {
+    var result = yield directFetch(url, options);
+    if (result && result.length > 500)
+      return result;
+    return yield proxyFetch(url, "GET", null);
   });
 }
 function fetchPost(url, body, options) {
   return __async(this, null, function* () {
     options = options || {};
-    var controller;
-    var timeoutId;
-    try {
-      controller = new AbortController();
-      timeoutId = setTimeout(function() {
-        controller.abort();
-      }, options.timeout || 15e3);
-    } catch (e) {
-      controller = null;
-    }
-    try {
-      var fetchOpts = {
-        method: "POST",
-        body,
-        redirect: "follow",
-        headers: Object.assign({}, HEADERS, {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "X-Requested-With": "XMLHttpRequest"
-        }, options.headers || {})
-      };
-      if (controller)
-        fetchOpts.signal = controller.signal;
-      var response = yield fetch(url, fetchOpts);
-      if (timeoutId)
-        clearTimeout(timeoutId);
-      if (!response.ok)
-        return "";
-      return yield response.text();
-    } catch (e) {
-      if (timeoutId)
-        clearTimeout(timeoutId);
-      console.log("[FaselHDX] fetchPost error: " + e.message);
-      return "";
-    }
+    var result = yield directFetch(url, Object.assign({}, options, {
+      method: "POST",
+      body,
+      headers: Object.assign({}, options.headers || {}, {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest"
+      })
+    }));
+    if (result && result.length > 100)
+      return result;
+    return yield proxyFetch(url, "POST", body);
   });
 }
 
@@ -373,57 +431,53 @@ function extractStreams(tmdbId, mediaType, season, episode) {
       return [];
     }
     console.log("[FaselHDX] Title: " + meta.title + " (" + meta.year + ")");
-    var domains = getDomains();
-    for (var d = 0; d < domains.length; d++) {
-      var base = domains[d];
-      setBaseUrl(base);
-      console.log("[FaselHDX] Trying domain: " + base);
-      var urls = yield search(meta.title, base);
-      if (!urls.length && meta.year)
-        urls = yield search(meta.title + " " + meta.year, base);
-      if (!urls.length) {
-        console.log("[FaselHDX] No search results from " + base);
-        continue;
-      }
-      var pageUrl = pickBest(urls, mediaType, meta.title);
-      if (!pageUrl) {
-        console.log("[FaselHDX] No matching page");
-        continue;
-      }
-      console.log("[FaselHDX] Page: " + pageUrl);
-      if (mediaType === "tv" && season && episode && /\/(series|seasons|anime)\//.test(pageUrl)) {
-        var epUrl = yield resolveEpisode(pageUrl, season, episode, base);
-        if (epUrl)
-          pageUrl = epUrl;
-        console.log("[FaselHDX] Episode URL: " + pageUrl);
-      }
-      var html = yield fetchText(pageUrl, { headers: { Referer: base + "/" } });
-      if (!html) {
-        console.log("[FaselHDX] Empty page response");
-        continue;
-      }
-      var players = playerUrls(html);
-      console.log("[FaselHDX] Found " + players.length + " players");
-      if (!players.length)
-        continue;
-      for (var i = 0; i < players.length; i++) {
-        var streams = yield extractFromPlayer(players[i], pageUrl, base);
-        if (streams.length) {
-          console.log("[FaselHDX] Got " + streams.length + " streams");
-          var ref = { Referer: base + "/", Origin: base };
-          return streams.map(function(s) {
-            return {
-              name: "FaselHDX - " + (s.quality === "auto" ? "Auto" : s.quality),
-              title: s.quality === "auto" ? "Auto" : s.quality,
-              url: s.url,
-              quality: s.quality === "auto" ? "Auto" : s.quality,
-              headers: Object.assign({}, HEADERS, ref)
-            };
-          });
-        }
+    var base = getBaseUrl();
+    console.log("[FaselHDX] Using domain: " + base);
+    var urls = yield search(meta.title, base);
+    if (!urls.length && meta.year)
+      urls = yield search(meta.title + " " + meta.year, base);
+    if (!urls.length) {
+      console.log("[FaselHDX] No search results");
+      return [];
+    }
+    var pageUrl = pickBest(urls, mediaType, meta.title);
+    if (!pageUrl) {
+      console.log("[FaselHDX] No matching page");
+      return [];
+    }
+    console.log("[FaselHDX] Page: " + pageUrl);
+    if (mediaType === "tv" && season && episode && /\/(series|seasons|anime)\//.test(pageUrl)) {
+      var epUrl = yield resolveEpisode(pageUrl, season, episode, base);
+      if (epUrl)
+        pageUrl = epUrl;
+      console.log("[FaselHDX] Episode URL: " + pageUrl);
+    }
+    var html = yield fetchText(pageUrl, { headers: { Referer: base + "/" } });
+    if (!html) {
+      console.log("[FaselHDX] Empty page response");
+      return [];
+    }
+    var players = playerUrls(html);
+    console.log("[FaselHDX] Found " + players.length + " players");
+    if (!players.length)
+      return [];
+    for (var i = 0; i < players.length; i++) {
+      var streams = yield extractFromPlayer(players[i], pageUrl, base);
+      if (streams.length) {
+        console.log("[FaselHDX] Got " + streams.length + " streams");
+        var ref = { Referer: base + "/", Origin: base };
+        return streams.map(function(s) {
+          return {
+            name: "FaselHDX - " + (s.quality === "auto" ? "Auto" : s.quality),
+            title: s.quality === "auto" ? "Auto" : s.quality,
+            url: s.url,
+            quality: s.quality === "auto" ? "Auto" : s.quality,
+            headers: Object.assign({}, HEADERS, ref)
+          };
+        });
       }
     }
-    console.log("[FaselHDX] No streams found from any domain");
+    console.log("[FaselHDX] No streams found");
     return [];
   });
 }
