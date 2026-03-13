@@ -51,6 +51,16 @@ function proxyFetch(embedUrl) {
     return "";
   });
 }
+function resolveId(tmdbId, type) {
+  var url = PROXY_BASE + "/resolve/" + type + "/" + tmdbId;
+  console.log("[FaselHDX] Resolve: " + type + " " + tmdbId);
+  return safeFetch(url, { headers: HEADERS }).then(function(r) {
+    return r.ok ? r.json() : null;
+  }).catch(function(e) {
+    console.log("[FaselHDX] Resolve error: " + e.message);
+    return null;
+  });
+}
 
 // src/faselhdx/extractor.js
 function m3u8urls(text) {
@@ -184,37 +194,14 @@ async function processVideos(videos) {
   }
   return results;
 }
-async function resolveInternalId(tmdbId) {
-  var direct = await apiGet("media/detail/" + tmdbId + "/0");
-  if (direct && typeof direct === "object" && direct.tmdb_id === parseInt(tmdbId, 10)) {
-    console.log("[FaselHDX] Direct match: internal " + direct.id + " = TMDB " + tmdbId);
-    return direct;
-  }
-  var searchData = await apiGet("search/" + tmdbId + "/0");
-  var items = [];
-  if (searchData && typeof searchData === "object") {
-    items = searchData.search || searchData.data || [];
-    if (Array.isArray(searchData))
-      items = searchData;
-  }
-  for (var i = 0; i < items.length; i++) {
-    if (String(items[i].tmdb_id) === String(tmdbId)) {
-      console.log("[FaselHDX] Search match: internal " + items[i].id + " for TMDB " + tmdbId);
-      return items[i];
-    }
-  }
-  console.log("[FaselHDX] No match for TMDB " + tmdbId + " (searched " + items.length + " results)");
-  return null;
-}
 async function extractMovie(tmdbId) {
   console.log("[FaselHDX] Movie TMDB: " + tmdbId);
-  var resolved = await resolveInternalId(tmdbId);
-  if (!resolved)
+  var resolved = await resolveId(tmdbId, "movie");
+  if (!resolved || !resolved.id) {
+    console.log("[FaselHDX] Could not resolve TMDB " + tmdbId);
     return [];
-  if (resolved.videos && resolved.videos.length) {
-    console.log("[FaselHDX] Movie: " + (resolved.title || "untitled") + " | Videos: " + resolved.videos.length);
-    return processVideos(resolved.videos);
   }
+  console.log("[FaselHDX] Resolved: internal=" + resolved.id + " title=" + (resolved.title || "?"));
   var data = await apiGet("media/detail/" + resolved.id + "/0");
   if (!data || typeof data !== "object" || !data.id) {
     console.log("[FaselHDX] Movie detail failed for internal ID " + resolved.id);
@@ -227,17 +214,16 @@ async function extractSeries(tmdbId, season, episode) {
   var seasonNum = parseInt(season, 10);
   var episodeNum = parseInt(episode, 10);
   console.log("[FaselHDX] Series TMDB: " + tmdbId + " S" + seasonNum + "E" + episodeNum);
-  var resolved = await resolveInternalId(tmdbId);
-  var internalId = resolved ? resolved.id : tmdbId;
-  var seriesData = await apiGet("series/show/" + internalId + "/0");
+  var resolved = await resolveId(tmdbId, "tv");
+  if (!resolved || !resolved.id) {
+    console.log("[FaselHDX] Could not resolve series TMDB " + tmdbId);
+    return [];
+  }
+  console.log("[FaselHDX] Resolved: internal=" + resolved.id + " title=" + (resolved.title || "?"));
+  var seriesData = await apiGet("series/show/" + resolved.id + "/0");
   if (!seriesData || typeof seriesData === "string") {
-    if (internalId !== tmdbId) {
-      seriesData = await apiGet("series/show/" + tmdbId + "/0");
-    }
-    if (!seriesData || typeof seriesData === "string") {
-      console.log("[FaselHDX] Series not found for TMDB " + tmdbId);
-      return [];
-    }
+    console.log("[FaselHDX] Series not found for internal ID " + resolved.id);
+    return [];
   }
   var seasons = seriesData.seasons || [];
   console.log("[FaselHDX] Series: " + (seriesData.name || "untitled") + " | Seasons: " + seasons.length);

@@ -47,3 +47,16 @@ export function proxyFetch(embedUrl) {
             return '';
         });
 }
+
+// Resolve TMDB ID to internal EasyPlex ID via proxy
+// type: "movie" or "tv"
+export function resolveId(tmdbId, type) {
+    var url = PROXY_BASE + '/resolve/' + type + '/' + tmdbId;
+    console.log('[FaselHDX] Resolve: ' + type + ' ' + tmdbId);
+    return safeFetch(url, { headers: HEADERS })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .catch(function(e) {
+            console.log('[FaselHDX] Resolve error: ' + e.message);
+            return null;
+        });
+}
