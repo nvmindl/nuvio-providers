@@ -45,7 +45,7 @@ async function resolveTmdbMeta(tmdbId, mediaType) {
 // Extract content URLs from search HTML using regex (much faster than cheerio on 120KB pages)
 function extractSearchUrls(html) {
     var urls = [];
-    var re = /href="(https?:\/\/web\d+x\.faselhdx\.best\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\/[^"]+)"/gi;
+    var re = /href="(https?:\/\/web\d+x\.faselhdx\.\w+\/(movies|series|seasons|episodes|anime|anime-movies|anime-series|anime-episodes)\/[^"]+)"/gi;
     var m;
     while ((m = re.exec(html)) !== null) {
         if (m[1]) urls.push(m[1]);
