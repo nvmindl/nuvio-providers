@@ -1,4 +1,4 @@
-// FaselHDX v6.0.0 — EasyPlex API client
+// FaselHDX v6.5.1 — EasyPlex API client
 var PROXY_BASE = 'https://faselhdx-proxy.onrender.com';
 
 export var HEADERS = {
