@@ -4,8 +4,8 @@ import { HEADERS, apiGet, extractSources, resolveId } from './http.js';
 
 // Hosts that work: aflam.news→mp4plus.org (direct MP4), anafast.org (HLS)
 // CDN URLs on cdnz.quest are direct-playable: no IP-lock, no referer, CORS *
-var PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|lulustream\.com|luluvdo\.com|luluvid\.com|vidtube\.one|vidtube\.pro|1vid\.xyz/i;
-var BLOCKED_HOST_RE = /fasel-hd\.cam|faselhd\.cam|faselhd\.center|faselhdx\.best|egybestvid\.com|vidspeed|uqload|dw\.uns|liiivideo\.com|dingtezuni\.com|videoland\.|vidoba\./i;
+var PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|vidtube\.one|vidtube\.pro|1vid\.xyz/i;
+var BLOCKED_HOST_RE = /fasel-hd\.cam|faselhd\.cam|faselhd\.center|faselhdx\.best|egybestvid\.com|vidspeed|uqload|dw\.uns|liiivideo\.com|dingtezuni\.com|videoland\.|vidoba\.|lulustream\.com|luluvdo\.com|luluvid\.com/i;
 
 // Sort videos: preferred hosts first, blocked hosts removed
 function sortVideos(videos) {
