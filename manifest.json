@@ -1,12 +1,12 @@
 {
   "name": "Nuvio Providers",
-  "version": "6.4.0",
+  "version": "6.4.1",
   "scrapers": [
     {
       "id": "FaselHDX",
       "name": "FaselHDX",
       "description": "Arabic streaming with direct MP4 and HLS from multiple CDN sources",
-      "version": "6.4.0",
+      "version": "6.4.1",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",
