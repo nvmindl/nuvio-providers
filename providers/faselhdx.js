@@ -228,7 +228,7 @@ var PREFERRED_HOST_RE, BLOCKED_HOST_RE;
 var init_extractor = __esm({
   "src/faselhdx/extractor.js"() {
     init_http();
-    PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|egybestvid\.com|vidspeed\.org|uqload\.cx|uqload\.net|uqload\.io|vidoba\.org|vidoba\.site/i;
+    PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|egybestvid\.com|vidspeed\.org|uqload\.cx|uqload\.net|uqload\.io|vidoba\.org|vidoba\.site|streamwish\.fun|earnvids\.xyz|d0o0d\.com|updown\.icu|filemoon\.sx/i;
     BLOCKED_HOST_RE = /fasel-hd\.cam|faselhd\.cam|faselhd\.center|faselhdx\.best|vidtube\.|1vid\.xyz|vidspeed\.cc|anafast\.online|vidspeeds\.com|dw\.uns|liiivideo\.com|dingtezuni\.com|videoland\.|lulustream\.com|luluvdo\.com|luluvid\.com/i;
   }
 });
