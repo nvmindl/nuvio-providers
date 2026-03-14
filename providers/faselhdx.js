@@ -1,1 +1,252 @@
-var X=(o,e)=>()=>(o&&(e=o(o=0)),e);var b=(o,e)=>()=>(e||o((e={exports:{}}).exports,e),e.exports);function D(o,e){e=e||{};var r=e.timeout||25e3,t,n;try{t=new AbortController,n=setTimeout(function(){t.abort()},r)}catch{t=null}var a={method:"GET",headers:e.headers||h};return t&&(a.signal=t.signal),fetch(o,a).then(function(l){return n&&clearTimeout(n),l}).catch(function(l){throw n&&clearTimeout(n),l})}function m(o){var e=p+"/api/"+o;return console.log("[FaselHDX] API: "+e.substring(0,120)),D(e,{headers:h}).then(function(r){return r.ok?r.json():null}).catch(function(r){return console.log("[FaselHDX] API error: "+r.message),null})}function S(o){var e=p+"/extract?url="+encodeURIComponent(o);return console.log("[FaselHDX] Extract: "+o.substring(0,80)),D(e,{headers:h}).then(function(r){return r.ok?r.json():{sources:[]}}).catch(function(r){return console.log("[FaselHDX] Extract error: "+r.message),{sources:[]}})}function H(o,e){var r=p+"/resolve/"+e+"/"+o;return console.log("[FaselHDX] Resolve: "+e+" "+o),D(r,{headers:h}).then(function(t){return t.ok?t.json():null}).catch(function(t){return console.log("[FaselHDX] Resolve error: "+t.message),null})}var p,h,x=X(()=>{p="https://faselhdx-proxy.onrender.com",h={"User-Agent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",Accept:"application/json, text/html, */*","Accept-Language":"ar,en;q=0.8"}});function q(o){for(var e=[],r=[],t=0;t<o.length;t++){var n=o[t].link||"";n&&(k.test(n)||(M.test(n)?e.push(o[t]):r.push(o[t])))}return e.concat(r)}async function E(o){if(!o||!o.length)return[];for(var e=q(o),r=[],t=0;t<e.length;t++){var n=e[t],a=n.link||"";if(a){for(var l=(n.server||"Server "+(t+1)).trim(),i=n.lang||"",s=await S(a),c=s&&s.sources?s.sources:[],u=0;u<c.length;u++){var f=c[u];r.push({url:f.url,quality:f.quality||"auto",type:f.type||"mp4",name:l,lang:i})}if(r.length>=6)break}}return r}async function A(o){console.log("[FaselHDX] Movie TMDB: "+o);var e=await H(o,"movie");if(!e||!e.id)return console.log("[FaselHDX] Could not resolve TMDB "+o),[];console.log("[FaselHDX] Resolved: internal="+e.id+" title="+(e.title||"?"));var r=await m("media/detail/"+e.id+"/0");return!r||typeof r!="object"||!r.id?(console.log("[FaselHDX] Movie detail failed for internal ID "+e.id),[]):(console.log("[FaselHDX] Movie: "+(r.title||"untitled")+" | Videos: "+(r.videos?r.videos.length:0)),E(r.videos))}async function T(o,e,r){var t=parseInt(e,10),n=parseInt(r,10);console.log("[FaselHDX] Series TMDB: "+o+" S"+t+"E"+n);var a=await H(o,"tv");if(!a||!a.id)return console.log("[FaselHDX] Could not resolve series TMDB "+o),[];console.log("[FaselHDX] Resolved: internal="+a.id+" title="+(a.title||"?"));var l=await m("series/show/"+a.id+"/0");if(!l||typeof l=="string")return console.log("[FaselHDX] Series not found for internal ID "+a.id),[];var i=l.seasons||[];console.log("[FaselHDX] Series: "+(l.name||"untitled")+" | Seasons: "+i.length);for(var s=null,c=0;c<i.length;c++)if(i[c].season_number===t){s=i[c];break}if(!s)for(var u=0;u<i.length;u++){var f=(i[u].name||"").match(/\d+/);if(f&&parseInt(f[0],10)===t){s=i[u];break}}if(!s)return console.log("[FaselHDX] Season "+t+" not found"),[];console.log("[FaselHDX] Season found: id="+s.id+" name="+(s.name||"?"));var F=await m("series/season/"+s.id+"/0");if(!F)return console.log("[FaselHDX] Failed to load season data"),[];var g=F.episodes||[];console.log("[FaselHDX] Episodes: "+g.length);for(var v=null,d=0;d<g.length;d++)if(g[d].episode_number===n){v=g[d];break}return v?(console.log("[FaselHDX] Episode: "+(v.name||n)+" | Videos: "+(v.videos?v.videos.length:0)),E(v.videos)):(console.log("[FaselHDX] Episode "+n+" not found"),[])}async function y(o,e,r,t){console.log("[FaselHDX] Starting: "+e+" "+o);var n=[];return e==="movie"?n=await A(o):n=await T(o,r,t),n.length?(console.log("[FaselHDX] Got "+n.length+" streams"),n.map(function(a){var l=a.name||"FaselHDX";return a.lang&&(l=l+" ["+a.lang+"]"),a.quality&&a.quality!=="auto"&&(l=l+" "+a.quality),{name:"FaselHDX",title:l,url:a.url,quality:a.quality||"auto"}})):(console.log("[FaselHDX] No streams found"),[])}var M,k,w=X(()=>{x();M=/aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|vidtube\.one|vidtube\.pro|1vid\.xyz/i,k=/fasel-hd\.cam|faselhd\.cam|faselhd\.center|faselhdx\.best|egybestvid\.com|vidspeed|uqload|dw\.uns|liiivideo\.com|dingtezuni\.com|videoland\.|vidoba\.|lulustream\.com|luluvdo\.com|luluvid\.com/i});var C=b((z,R)=>{w();async function _(o,e,r,t){try{return console.log("[FaselHDX] Request: "+e+" "+o),await y(o,e,r,t)}catch(n){return console.error("[FaselHDX] Error: "+n.message),[]}}R.exports={getStreams:_}});export default C();
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
+
+// src/faselhdx/http.js
+function safeFetch(url, opts) {
+  opts = opts || {};
+  var ms = opts.timeout || 25e3;
+  var controller;
+  var tid;
+  try {
+    controller = new AbortController();
+    tid = setTimeout(function() {
+      controller.abort();
+    }, ms);
+  } catch (e) {
+    controller = null;
+  }
+  var fetchOpts = { method: "GET", headers: opts.headers || HEADERS };
+  if (controller)
+    fetchOpts.signal = controller.signal;
+  return fetch(url, fetchOpts).then(function(r) {
+    if (tid)
+      clearTimeout(tid);
+    return r;
+  }).catch(function(e) {
+    if (tid)
+      clearTimeout(tid);
+    throw e;
+  });
+}
+function apiGet(path) {
+  var url = PROXY_BASE + "/api/" + path;
+  console.log("[FaselHDX] API: " + url.substring(0, 120));
+  return safeFetch(url, { headers: HEADERS }).then(function(r) {
+    return r.ok ? r.json() : null;
+  }).catch(function(e) {
+    console.log("[FaselHDX] API error: " + e.message);
+    return null;
+  });
+}
+function extractSources(embedUrl) {
+  var url = PROXY_BASE + "/extract?url=" + encodeURIComponent(embedUrl);
+  console.log("[FaselHDX] Extract: " + embedUrl.substring(0, 80));
+  return safeFetch(url, { headers: HEADERS }).then(function(r) {
+    return r.ok ? r.json() : { sources: [] };
+  }).catch(function(e) {
+    console.log("[FaselHDX] Extract error: " + e.message);
+    return { sources: [] };
+  });
+}
+function resolveId(tmdbId, type) {
+  var url = PROXY_BASE + "/resolve/" + type + "/" + tmdbId;
+  console.log("[FaselHDX] Resolve: " + type + " " + tmdbId);
+  return safeFetch(url, { headers: HEADERS }).then(function(r) {
+    return r.ok ? r.json() : null;
+  }).catch(function(e) {
+    console.log("[FaselHDX] Resolve error: " + e.message);
+    return null;
+  });
+}
+var PROXY_BASE, HEADERS;
+var init_http = __esm({
+  "src/faselhdx/http.js"() {
+    PROXY_BASE = "https://faselhdx-proxy.onrender.com";
+    HEADERS = {
+      "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+      "Accept": "application/json, text/html, */*",
+      "Accept-Language": "ar,en;q=0.8"
+    };
+  }
+});
+
+// src/faselhdx/extractor.js
+function sortVideos(videos) {
+  var preferred = [];
+  var others = [];
+  for (var i = 0; i < videos.length; i++) {
+    var link = videos[i].link || "";
+    if (!link)
+      continue;
+    if (BLOCKED_HOST_RE.test(link))
+      continue;
+    if (PREFERRED_HOST_RE.test(link)) {
+      preferred.push(videos[i]);
+    } else {
+      others.push(videos[i]);
+    }
+  }
+  return preferred.concat(others);
+}
+async function processVideos(videos) {
+  if (!videos || !videos.length)
+    return [];
+  var sorted = sortVideos(videos);
+  var results = [];
+  for (var i = 0; i < sorted.length; i++) {
+    var v = sorted[i];
+    var link = v.link || "";
+    if (!link)
+      continue;
+    var serverName = (v.server || "Server " + (i + 1)).trim();
+    var lang = v.lang || "";
+    var data = await extractSources(link);
+    var sources = data && data.sources ? data.sources : [];
+    for (var j = 0; j < sources.length; j++) {
+      var s = sources[j];
+      results.push({
+        url: s.url,
+        quality: s.quality || "auto",
+        type: s.type || "mp4",
+        name: serverName,
+        lang
+      });
+    }
+    if (results.length >= 6)
+      break;
+  }
+  return results;
+}
+async function extractMovie(tmdbId) {
+  console.log("[FaselHDX] Movie TMDB: " + tmdbId);
+  var resolved = await resolveId(tmdbId, "movie");
+  if (!resolved || !resolved.id) {
+    console.log("[FaselHDX] Could not resolve TMDB " + tmdbId);
+    return [];
+  }
+  console.log("[FaselHDX] Resolved: internal=" + resolved.id + " title=" + (resolved.title || "?"));
+  var data = await apiGet("media/detail/" + resolved.id + "/0");
+  if (!data || typeof data !== "object" || !data.id) {
+    console.log("[FaselHDX] Movie detail failed for internal ID " + resolved.id);
+    return [];
+  }
+  console.log("[FaselHDX] Movie: " + (data.title || "untitled") + " | Videos: " + (data.videos ? data.videos.length : 0));
+  return processVideos(data.videos);
+}
+async function extractSeries(tmdbId, season, episode) {
+  var seasonNum = parseInt(season, 10);
+  var episodeNum = parseInt(episode, 10);
+  console.log("[FaselHDX] Series TMDB: " + tmdbId + " S" + seasonNum + "E" + episodeNum);
+  var resolved = await resolveId(tmdbId, "tv");
+  if (!resolved || !resolved.id) {
+    console.log("[FaselHDX] Could not resolve series TMDB " + tmdbId);
+    return [];
+  }
+  console.log("[FaselHDX] Resolved: internal=" + resolved.id + " title=" + (resolved.title || "?"));
+  var seriesData = await apiGet("series/show/" + resolved.id + "/0");
+  if (!seriesData || typeof seriesData === "string") {
+    console.log("[FaselHDX] Series not found for internal ID " + resolved.id);
+    return [];
+  }
+  var seasons = seriesData.seasons || [];
+  console.log("[FaselHDX] Series: " + (seriesData.name || "untitled") + " | Seasons: " + seasons.length);
+  var targetSeason = null;
+  for (var s = 0; s < seasons.length; s++) {
+    if (seasons[s].season_number === seasonNum) {
+      targetSeason = seasons[s];
+      break;
+    }
+  }
+  if (!targetSeason) {
+    for (var s2 = 0; s2 < seasons.length; s2++) {
+      var nm = (seasons[s2].name || "").match(/\d+/);
+      if (nm && parseInt(nm[0], 10) === seasonNum) {
+        targetSeason = seasons[s2];
+        break;
+      }
+    }
+  }
+  if (!targetSeason) {
+    console.log("[FaselHDX] Season " + seasonNum + " not found");
+    return [];
+  }
+  console.log("[FaselHDX] Season found: id=" + targetSeason.id + " name=" + (targetSeason.name || "?"));
+  var seasonData = await apiGet("series/season/" + targetSeason.id + "/0");
+  if (!seasonData) {
+    console.log("[FaselHDX] Failed to load season data");
+    return [];
+  }
+  var episodes = seasonData.episodes || [];
+  console.log("[FaselHDX] Episodes: " + episodes.length);
+  var targetEp = null;
+  for (var e = 0; e < episodes.length; e++) {
+    if (episodes[e].episode_number === episodeNum) {
+      targetEp = episodes[e];
+      break;
+    }
+  }
+  if (!targetEp) {
+    console.log("[FaselHDX] Episode " + episodeNum + " not found");
+    return [];
+  }
+  console.log("[FaselHDX] Episode: " + (targetEp.name || episodeNum) + " | Videos: " + (targetEp.videos ? targetEp.videos.length : 0));
+  return processVideos(targetEp.videos);
+}
+async function extractStreams(tmdbId, mediaType, season, episode) {
+  console.log("[FaselHDX] Starting: " + mediaType + " " + tmdbId);
+  var streams = [];
+  if (mediaType === "movie") {
+    streams = await extractMovie(tmdbId);
+  } else {
+    streams = await extractSeries(tmdbId, season, episode);
+  }
+  if (!streams.length) {
+    console.log("[FaselHDX] No streams found");
+    return [];
+  }
+  console.log("[FaselHDX] Got " + streams.length + " streams");
+  return streams.map(function(s) {
+    var label = s.name || "FaselHDX";
+    if (s.lang)
+      label = label + " [" + s.lang + "]";
+    if (s.quality && s.quality !== "auto")
+      label = label + " " + s.quality;
+    return {
+      name: "FaselHDX",
+      title: label,
+      url: s.url,
+      quality: s.quality || "auto"
+    };
+  });
+}
+var PREFERRED_HOST_RE, BLOCKED_HOST_RE;
+var init_extractor = __esm({
+  "src/faselhdx/extractor.js"() {
+    init_http();
+    PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|egybestvid\.com|vidspeed\.org|uqload\.cx|uqload\.net|vidoba\.org/i;
+    BLOCKED_HOST_RE = /fasel-hd\.cam|faselhd\.cam|faselhd\.center|faselhdx\.best|vidtube\.|1vid\.xyz|vidspeed\.cc|anafast\.online|vidspeeds\.com|dw\.uns|liiivideo\.com|dingtezuni\.com|videoland\.|lulustream\.com|luluvdo\.com|luluvid\.com/i;
+  }
+});
+
+// src/faselhdx/index.js
+var require_faselhdx = __commonJS({
+  "src/faselhdx/index.js"(exports, module) {
+    init_extractor();
+    async function getStreams(tmdbId, mediaType, season, episode) {
+      try {
+        console.log("[FaselHDX] Request: " + mediaType + " " + tmdbId);
+        return await extractStreams(tmdbId, mediaType, season, episode);
+      } catch (error) {
+        console.error("[FaselHDX] Error: " + error.message);
+        return [];
+      }
+    }
+    module.exports = { getStreams };
+  }
+});
+export default require_faselhdx();
