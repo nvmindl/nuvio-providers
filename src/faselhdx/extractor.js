@@ -1,62 +1,116 @@
-import { HEADERS, apiGet, extractSources, resolveId } from './http.js';
+import { fetchMoviesApi, fetchFlixVideo, fetchM3U8 } from './http.js';
 
-// ── Helpers ──
+// ── Parse m3u8 master playlist for quality variants ──
 
-// Working hosts from Render: egybestvid, uqload, vidspeed.org, vidoba, aflam, reviewrate, anafast, streamwish, earnvids
-var PREFERRED_HOST_RE = /aflam\.news|mp4plus\.org|anafast\.org|reviewrate\.net|egybestvid\.com|vidspeed\.org|uqload\.cx|uqload\.net|uqload\.io|vidoba\.org|vidoba\.site|streamwish\.fun|earnvids\.xyz|d0o0d\.com|updown\.icu|filemoon\.sx/i;
-var BLOCKED_HOST_RE = /fasel-hd\.cam|faselhd\.cam|faselhd\.center|faselhdx\.best|vidtube\.|1vid\.xyz|vidspeed\.cc|anafast\.online|vidspeeds\.com|dw\.uns|liiivideo\.com|dingtezuni\.com|videoland\.|lulustream\.com|luluvdo\.com|luluvid\.com/i;
+function parseQualities(masterText, masterUrl) {
+    var streams = [];
+    var lines = masterText.split('\n');
+    var baseUrl = masterUrl.replace(/\/[^/]*$/, '/');
 
-// Sort videos: preferred hosts first, blocked hosts removed
-function sortVideos(videos) {
-    var preferred = [];
-    var others = [];
-    for (var i = 0; i < videos.length; i++) {
-        var link = videos[i].link || '';
-        if (!link) continue;
-        if (BLOCKED_HOST_RE.test(link)) continue;
-        if (PREFERRED_HOST_RE.test(link)) {
-            preferred.push(videos[i]);
-        } else {
-            others.push(videos[i]);
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf('#EXT-X-STREAM-INF') !== 0) continue;
+
+        // Extract resolution
+        var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
+        var width = resMatch ? parseInt(resMatch[1], 10) : 0;
+        var height = resMatch ? parseInt(resMatch[2], 10) : 0;
+
+        // Next non-empty line is the variant URL
+        var variantUrl = '';
+        for (var j = i + 1; j < lines.length; j++) {
+            var next = lines[j].trim();
+            if (next && next.charAt(0) !== '#') {
+                variantUrl = next;
+                break;
+            }
         }
+        if (!variantUrl) continue;
+
+        // Resolve relative URLs
+        if (variantUrl.indexOf('http') !== 0) {
+            variantUrl = baseUrl + variantUrl;
+        }
+
+        var quality = 'auto';
+        if (width >= 1920 || height >= 1080) quality = '1080p';
+        else if (width >= 1280 || height >= 720) quality = '720p';
+        else if (width >= 854 || height >= 480) quality = '480p';
+        else if (width > 0 || height > 0) quality = '360p';
+
+        streams.push({ url: variantUrl, quality: quality, height: height });
     }
-    return preferred.concat(others);
+
+    // Sort highest quality first
+    streams.sort(function(a, b) { return b.height - a.height; });
+    return streams;
 }
 
-// Process video objects from the API into stream results
-async function processVideos(videos) {
-    if (!videos || !videos.length) return [];
-    var sorted = sortVideos(videos);
+// ── Extract video code from moviesapi.to video_url ──
+
+function extractVideoCode(videoUrl) {
+    // video_url: "https://flixcdn.cyou/#uywmde&poster=..."
+    var hashIdx = videoUrl.indexOf('#');
+    if (hashIdx === -1) return null;
+    var fragment = videoUrl.substring(hashIdx + 1);
+    var ampIdx = fragment.indexOf('&');
+    if (ampIdx !== -1) fragment = fragment.substring(0, ampIdx);
+    return fragment || null;
+}
+
+// ── Extract subtitles from moviesapi.to response ──
+
+function extractSubtitles(data) {
+    var subs = data.subtitles;
+    if (!subs || !subs.length) return [];
     var results = [];
-
-    for (var i = 0; i < sorted.length; i++) {
-        var v = sorted[i];
-        var link = v.link || '';
-        if (!link) continue;
-
-        var serverName = (v.server || 'Server ' + (i + 1)).trim();
-        var lang = v.lang || '';
-
-        // Use /extract endpoint — server-side fetches embed page and returns sources
-        var data = await extractSources(link);
-        var sources = data && data.sources ? data.sources : [];
-
-        for (var j = 0; j < sources.length; j++) {
-            var s = sources[j];
+    for (var i = 0; i < subs.length; i++) {
+        var s = subs[i];
+        if (s.url) {
             results.push({
+                language: s.language || s.label || 'Unknown',
                 url: s.url,
-                quality: s.quality || 'auto',
-                type: s.type || 'mp4',
-                name: serverName,
-                lang: lang,
             });
         }
+    }
+    return results;
+}
 
-        // Stop after getting enough results (prefer quality over quantity)
-        if (results.length >= 6) break;
+// ── Build streams from flixcdn video data ──
+
+async function buildStreams(videoData, masterUrl, subtitles) {
+    var headers = {
+        'Referer': 'https://flixcdn.cyou/',
+        'Origin': 'https://flixcdn.cyou',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    };
+
+    // Try to fetch and parse the master m3u8 for quality variants
+    var masterText = await fetchM3U8(masterUrl);
+    var variants = parseQualities(masterText, masterUrl);
+
+    if (variants.length > 0) {
+        return variants.map(function(v) {
+            return {
+                name: 'FaselHDX',
+                title: 'FaselHDX ' + v.quality,
+                url: v.url,
+                quality: v.quality,
+                headers: headers,
+                subtitles: subtitles,
+            };
+        });
     }
 
-    return results;
+    // Fallback: return the master URL directly
+    return [{
+        name: 'FaselHDX',
+        title: 'FaselHDX Auto',
+        url: masterUrl,
+        quality: 'auto',
+        headers: headers,
+        subtitles: subtitles,
+    }];
 }
 
 // ── Movie extraction ──
@@ -64,23 +118,29 @@ async function processVideos(videos) {
 async function extractMovie(tmdbId) {
     console.log('[FaselHDX] Movie TMDB: ' + tmdbId);
 
-    // Resolve TMDB ID → internal ID via proxy
-    var resolved = await resolveId(tmdbId, 'movie');
-    if (!resolved || !resolved.id) {
-        console.log('[FaselHDX] Could not resolve TMDB ' + tmdbId);
-        return [];
-    }
-    console.log('[FaselHDX] Resolved: internal=' + resolved.id + ' title=' + (resolved.title || '?'));
-
-    // Fetch full detail with videos
-    var data = await apiGet('media/detail/' + resolved.id + '/0');
-    if (!data || typeof data !== 'object' || !data.id) {
-        console.log('[FaselHDX] Movie detail failed for internal ID ' + resolved.id);
+    var data = await fetchMoviesApi('movie/' + tmdbId);
+    if (!data || !data.video_url) {
+        console.log('[FaselHDX] Movie not found on MoviesAPI');
         return [];
     }
 
-    console.log('[FaselHDX] Movie: ' + (data.title || 'untitled') + ' | Videos: ' + (data.videos ? data.videos.length : 0));
-    return processVideos(data.videos);
+    console.log('[FaselHDX] Movie: ' + (data.title || 'untitled'));
+    var videoCode = extractVideoCode(data.video_url);
+    if (!videoCode) {
+        console.log('[FaselHDX] No video code in URL');
+        return [];
+    }
+
+    console.log('[FaselHDX] Video code: ' + videoCode);
+    var videoData = await fetchFlixVideo(videoCode);
+    if (!videoData || !videoData.source) {
+        console.log('[FaselHDX] FlixCDN returned no source');
+        return [];
+    }
+
+    console.log('[FaselHDX] Source: ' + videoData.source.substring(0, 80));
+    var subtitles = extractSubtitles(data);
+    return buildStreams(videoData, videoData.source, subtitles);
 }
 
 // ── Series extraction ──
@@ -90,76 +150,29 @@ async function extractSeries(tmdbId, season, episode) {
     var episodeNum = parseInt(episode, 10);
     console.log('[FaselHDX] Series TMDB: ' + tmdbId + ' S' + seasonNum + 'E' + episodeNum);
 
-    // Resolve TMDB ID → internal ID via proxy
-    var resolved = await resolveId(tmdbId, 'tv');
-    if (!resolved || !resolved.id) {
-        console.log('[FaselHDX] Could not resolve series TMDB ' + tmdbId);
-        return [];
-    }
-    console.log('[FaselHDX] Resolved: internal=' + resolved.id + ' title=' + (resolved.title || '?'));
-
-    // Step 1: Get series info with season list
-    var seriesData = await apiGet('series/show/' + resolved.id + '/0');
-    if (!seriesData || typeof seriesData === 'string') {
-        console.log('[FaselHDX] Series not found for internal ID ' + resolved.id);
+    var data = await fetchMoviesApi('tv/' + tmdbId + '/' + seasonNum + '/' + episodeNum);
+    if (!data || !data.video_url) {
+        console.log('[FaselHDX] Episode not found on MoviesAPI');
         return [];
     }
 
-    var seasons = seriesData.seasons || [];
-    console.log('[FaselHDX] Series: ' + (seriesData.name || 'untitled') + ' | Seasons: ' + seasons.length);
-
-    // Find the matching season
-    var targetSeason = null;
-    for (var s = 0; s < seasons.length; s++) {
-        if (seasons[s].season_number === seasonNum) {
-            targetSeason = seasons[s];
-            break;
-        }
-    }
-    // Fallback: match by name containing the number
-    if (!targetSeason) {
-        for (var s2 = 0; s2 < seasons.length; s2++) {
-            var nm = (seasons[s2].name || '').match(/\d+/);
-            if (nm && parseInt(nm[0], 10) === seasonNum) {
-                targetSeason = seasons[s2];
-                break;
-            }
-        }
-    }
-
-    if (!targetSeason) {
-        console.log('[FaselHDX] Season ' + seasonNum + ' not found');
+    console.log('[FaselHDX] Episode: ' + (data.title || 'untitled'));
+    var videoCode = extractVideoCode(data.video_url);
+    if (!videoCode) {
+        console.log('[FaselHDX] No video code in URL');
         return [];
     }
 
-    console.log('[FaselHDX] Season found: id=' + targetSeason.id + ' name=' + (targetSeason.name || '?'));
-
-    // Step 2: Get episodes for this season
-    var seasonData = await apiGet('series/season/' + targetSeason.id + '/0');
-    if (!seasonData) {
-        console.log('[FaselHDX] Failed to load season data');
+    console.log('[FaselHDX] Video code: ' + videoCode);
+    var videoData = await fetchFlixVideo(videoCode);
+    if (!videoData || !videoData.source) {
+        console.log('[FaselHDX] FlixCDN returned no source');
         return [];
     }
 
-    var episodes = seasonData.episodes || [];
-    console.log('[FaselHDX] Episodes: ' + episodes.length);
-
-    // Find the matching episode
-    var targetEp = null;
-    for (var e = 0; e < episodes.length; e++) {
-        if (episodes[e].episode_number === episodeNum) {
-            targetEp = episodes[e];
-            break;
-        }
-    }
-
-    if (!targetEp) {
-        console.log('[FaselHDX] Episode ' + episodeNum + ' not found');
-        return [];
-    }
-
-    console.log('[FaselHDX] Episode: ' + (targetEp.name || episodeNum) + ' | Videos: ' + (targetEp.videos ? targetEp.videos.length : 0));
-    return processVideos(targetEp.videos);
+    console.log('[FaselHDX] Source: ' + videoData.source.substring(0, 80));
+    var subtitles = extractSubtitles(data);
+    return buildStreams(videoData, videoData.source, subtitles);
 }
 
 // ── Main export ──
@@ -176,21 +189,9 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
 
     if (!streams.length) {
         console.log('[FaselHDX] No streams found');
-        return [];
+    } else {
+        console.log('[FaselHDX] Got ' + streams.length + ' streams');
     }
 
-    console.log('[FaselHDX] Got ' + streams.length + ' streams');
-
-    return streams.map(function(s) {
-        var label = s.name || 'FaselHDX';
-        if (s.lang) label = label + ' [' + s.lang + ']';
-        if (s.quality && s.quality !== 'auto') label = label + ' ' + s.quality;
-
-        return {
-            name: 'FaselHDX',
-            title: label,
-            url: s.url,
-            quality: s.quality || 'auto',
-        };
-    });
+    return streams;
 }
