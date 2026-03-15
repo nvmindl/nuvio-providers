@@ -1,6 +1,6 @@
 /**
  * _template - Built from src/_template/
- * Generated: 2026-03-07T05:22:30.068Z
+ * Generated: 2026-03-15T23:49:12.556Z
  */
 var __create = Object.create;
 var __defProp = Object.defineProperty;

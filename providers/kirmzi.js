@@ -1,6 +1,6 @@
 /**
  * kirmzi - Built from src/kirmzi/
- * Generated: 2026-03-12T05:21:53.539Z
+ * Generated: 2026-03-15T23:49:12.617Z
  */
 var __defProp = Object.defineProperty;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -156,10 +156,15 @@ function buildAlbaSlugs(meta, season, episode) {
   if (meta.originalTitle) {
     add(romanizeToSlug(meta.originalTitle.split(":")[0].trim()));
     add(romanizeToSlug(meta.originalTitle));
+    add(romanizeToSlug(meta.originalTitle.replace(/\bve\b/gi, "and")));
+    add(romanizeToSlug(meta.originalTitle.replace(/\band\b/gi, "ve")));
   }
   if (meta.englishTitle) {
     add(romanizeToSlug(meta.englishTitle.split(":")[0].trim()));
     add(romanizeToSlug(meta.englishTitle));
+    var noThe = meta.englishTitle.replace(/^the\s+/i, "");
+    if (noThe !== meta.englishTitle)
+      add(romanizeToSlug(noThe));
   }
   return slugs;
 }
@@ -460,6 +465,30 @@ function searchSiteForEpisode(query, episode) {
     return "";
   });
 }
+function raceAlbaSlugs(slugs) {
+  return __async(this, null, function* () {
+    if (slugs.length === 0)
+      return null;
+    console.log("[Kirmzi] Racing " + slugs.length + " alba slugs...");
+    var results = yield Promise.all(slugs.map(function(s) {
+      var url = ALBA_BASE + "/" + s + "/";
+      return tryExtractFromAlba(url).then(function(r) {
+        if (r)
+          r.slug = s;
+        return r;
+      }).catch(function() {
+        return null;
+      });
+    }));
+    for (var i = 0; i < results.length; i++) {
+      if (results[i]) {
+        console.log("[Kirmzi] Won with slug: " + results[i].slug);
+        return results[i];
+      }
+    }
+    return null;
+  });
+}
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     if (mediaType !== "tv") {
@@ -477,44 +506,31 @@ function extractStreams(tmdbId, mediaType, season, episode) {
       return [];
     }
     console.log("[Kirmzi] Titles: AR=" + meta.arabicTitle + " EN=" + meta.englishTitle + " ORIG=" + meta.originalTitle);
+    var candidateSlugs = buildAlbaSlugs(meta, season, episode);
+    var result = yield raceAlbaSlugs(candidateSlugs);
+    if (result)
+      return buildStreams(result);
+    console.log("[Kirmzi] Alba slugs failed, trying kirmzi site...");
     var albaUrl = "";
     if (meta.arabicTitle) {
       var episodeUrl = buildEpisodeUrl(meta.arabicTitle, episode);
-      console.log("[Kirmzi] Episode URL: " + episodeUrl);
-      var episodeHtml = yield fetchText(episodeUrl);
+      var episodeHtml = yield fetchText(episodeUrl, { timeout: 5e3 });
       albaUrl = episodeHtml ? extractAlbaplayerUrl(episodeHtml) : "";
       if (!albaUrl) {
-        console.log("[Kirmzi] Direct slug has no player, trying search...");
         var searchedUrl = yield searchForEpisode(meta, episode);
         if (searchedUrl) {
-          episodeHtml = yield fetchText(searchedUrl);
+          episodeHtml = yield fetchText(searchedUrl, { timeout: 5e3 });
           albaUrl = episodeHtml ? extractAlbaplayerUrl(episodeHtml) : "";
         }
       }
     }
     if (!albaUrl) {
-      console.log("[Kirmzi] Kirmzi site failed, trying direct albaplayer slugs...");
-      var candidateSlugs = buildAlbaSlugs(meta, season, episode);
-      for (var si = 0; si < candidateSlugs.length; si++) {
-        var candidateUrl = ALBA_BASE + "/" + candidateSlugs[si] + "/";
-        console.log("[Kirmzi] Trying alba slug: " + candidateSlugs[si]);
-        var directResult = yield tryExtractFromAlba(candidateUrl);
-        if (directResult) {
-          console.log("[Kirmzi] Direct alba slug worked: " + candidateSlugs[si]);
-          return buildStreams(directResult);
-        }
-      }
-    }
-    if (!albaUrl) {
-      console.log("[Kirmzi] No albaplayer iframe found");
+      console.log("[Kirmzi] No streams found");
       return [];
     }
-    console.log("[Kirmzi] Albaplayer URL: " + albaUrl);
-    var result = yield tryExtractFromAlba(albaUrl);
-    if (!result) {
-      console.log("[Kirmzi] No streams found from embed servers");
+    result = yield tryExtractFromAlba(albaUrl);
+    if (!result)
       return [];
-    }
     console.log("[Kirmzi] Found m3u8: " + result.m3u8.substring(0, 80) + "...");
     return buildStreams(result);
   });
