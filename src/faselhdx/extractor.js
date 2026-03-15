@@ -92,8 +92,8 @@ async function buildStreams(videoData, masterUrl, subtitles) {
     if (variants.length > 0) {
         return variants.map(function(v) {
             return {
-                name: 'FaselHDX',
-                title: 'FaselHDX ' + v.quality,
+                name: 'StreamFlix',
+                title: 'StreamFlix ' + v.quality,
                 url: v.url,
                 quality: v.quality,
                 headers: headers,
@@ -104,8 +104,8 @@ async function buildStreams(videoData, masterUrl, subtitles) {
 
     // Fallback: return the master URL directly
     return [{
-        name: 'FaselHDX',
-        title: 'FaselHDX Auto',
+        name: 'StreamFlix',
+        title: 'StreamFlix Auto',
         url: masterUrl,
         quality: 'auto',
         headers: headers,
@@ -116,29 +116,29 @@ async function buildStreams(videoData, masterUrl, subtitles) {
 // ── Movie extraction ──
 
 async function extractMovie(tmdbId) {
-    console.log('[FaselHDX] Movie TMDB: ' + tmdbId);
+    console.log('[StreamFlix] Movie TMDB: ' + tmdbId);
 
     var data = await fetchMoviesApi('movie/' + tmdbId);
     if (!data || !data.video_url) {
-        console.log('[FaselHDX] Movie not found on MoviesAPI');
+        console.log('[StreamFlix] Movie not found on MoviesAPI');
         return [];
     }
 
-    console.log('[FaselHDX] Movie: ' + (data.title || 'untitled'));
+    console.log('[StreamFlix] Movie: ' + (data.title || 'untitled'));
     var videoCode = extractVideoCode(data.video_url);
     if (!videoCode) {
-        console.log('[FaselHDX] No video code in URL');
+        console.log('[StreamFlix] No video code in URL');
         return [];
     }
 
-    console.log('[FaselHDX] Video code: ' + videoCode);
+    console.log('[StreamFlix] Video code: ' + videoCode);
     var videoData = await fetchFlixVideo(videoCode);
     if (!videoData || !videoData.source) {
-        console.log('[FaselHDX] FlixCDN returned no source');
+        console.log('[StreamFlix] FlixCDN returned no source');
         return [];
     }
 
-    console.log('[FaselHDX] Source: ' + videoData.source.substring(0, 80));
+    console.log('[StreamFlix] Source: ' + videoData.source.substring(0, 80));
     var subtitles = extractSubtitles(data);
     return buildStreams(videoData, videoData.source, subtitles);
 }
@@ -148,29 +148,29 @@ async function extractMovie(tmdbId) {
 async function extractSeries(tmdbId, season, episode) {
     var seasonNum = parseInt(season, 10);
     var episodeNum = parseInt(episode, 10);
-    console.log('[FaselHDX] Series TMDB: ' + tmdbId + ' S' + seasonNum + 'E' + episodeNum);
+    console.log('[StreamFlix] Series TMDB: ' + tmdbId + ' S' + seasonNum + 'E' + episodeNum);
 
     var data = await fetchMoviesApi('tv/' + tmdbId + '/' + seasonNum + '/' + episodeNum);
     if (!data || !data.video_url) {
-        console.log('[FaselHDX] Episode not found on MoviesAPI');
+        console.log('[StreamFlix] Episode not found on MoviesAPI');
         return [];
     }
 
-    console.log('[FaselHDX] Episode: ' + (data.title || 'untitled'));
+    console.log('[StreamFlix] Episode: ' + (data.title || 'untitled'));
     var videoCode = extractVideoCode(data.video_url);
     if (!videoCode) {
-        console.log('[FaselHDX] No video code in URL');
+        console.log('[StreamFlix] No video code in URL');
         return [];
     }
 
-    console.log('[FaselHDX] Video code: ' + videoCode);
+    console.log('[StreamFlix] Video code: ' + videoCode);
     var videoData = await fetchFlixVideo(videoCode);
     if (!videoData || !videoData.source) {
-        console.log('[FaselHDX] FlixCDN returned no source');
+        console.log('[StreamFlix] FlixCDN returned no source');
         return [];
     }
 
-    console.log('[FaselHDX] Source: ' + videoData.source.substring(0, 80));
+    console.log('[StreamFlix] Source: ' + videoData.source.substring(0, 80));
     var subtitles = extractSubtitles(data);
     return buildStreams(videoData, videoData.source, subtitles);
 }
@@ -178,7 +178,7 @@ async function extractSeries(tmdbId, season, episode) {
 // ── Main export ──
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
-    console.log('[FaselHDX] Starting: ' + mediaType + ' ' + tmdbId);
+    console.log('[StreamFlix] Starting: ' + mediaType + ' ' + tmdbId);
 
     var streams = [];
     if (mediaType === 'movie') {
@@ -188,9 +188,9 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
 
     if (!streams.length) {
-        console.log('[FaselHDX] No streams found');
+        console.log('[StreamFlix] No streams found');
     } else {
-        console.log('[FaselHDX] Got ' + streams.length + ' streams');
+        console.log('[StreamFlix] Got ' + streams.length + ' streams');
     }
 
     return streams;

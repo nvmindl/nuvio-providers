@@ -1,4 +1,4 @@
-// FaselHDX v7.0.0 — Direct scraping via moviesapi.to + flixcdn.cyou
+// StreamFlix v7.0.0 — Direct scraping via moviesapi.to + flixcdn.cyou
 var CryptoJS = require('crypto-js');
 
 var MOVIESAPI_BASE = 'https://ww2.moviesapi.to/api';
@@ -45,11 +45,11 @@ export function decryptResponse(hexData) {
 // Fetch movie/tv metadata from moviesapi.to
 export function fetchMoviesApi(path) {
     var url = MOVIESAPI_BASE + '/' + path;
-    console.log('[FaselHDX] MoviesAPI: ' + url);
+    console.log('[StreamFlix] MoviesAPI: ' + url);
     return safeFetch(url)
         .then(function(r) { return r.ok ? r.json() : null; })
         .catch(function(e) {
-            console.log('[FaselHDX] MoviesAPI error: ' + e.message);
+            console.log('[StreamFlix] MoviesAPI error: ' + e.message);
             return null;
         });
 }
@@ -57,7 +57,7 @@ export function fetchMoviesApi(path) {
 // Fetch encrypted video data from flixcdn and decrypt it
 export function fetchFlixVideo(videoCode) {
     var url = FLIXCDN_BASE + '/video?id=' + videoCode + '&w=1920&h=1080&r=ww2.moviesapi.to';
-    console.log('[FaselHDX] FlixCDN: ' + videoCode);
+    console.log('[StreamFlix] FlixCDN: ' + videoCode);
     return safeFetch(url, {
         headers: {
             'User-Agent': HEADERS['User-Agent'],
@@ -73,7 +73,7 @@ export function fetchFlixVideo(videoCode) {
             try { return JSON.parse(json); } catch(e) { return null; }
         })
         .catch(function(e) {
-            console.log('[FaselHDX] FlixCDN error: ' + e.message);
+            console.log('[StreamFlix] FlixCDN error: ' + e.message);
             return null;
         });
 }
@@ -89,7 +89,7 @@ export function fetchM3U8(url) {
     })
         .then(function(r) { return r.ok ? r.text() : ''; })
         .catch(function(e) {
-            console.log('[FaselHDX] M3U8 error: ' + e.message);
+            console.log('[StreamFlix] M3U8 error: ' + e.message);
             return '';
         });
 }
