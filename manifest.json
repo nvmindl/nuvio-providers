@@ -3,8 +3,8 @@
   "version": "7.0.0",
   "scrapers": [
     {
-      "id": "StreamFlix",
-      "name": "StreamFlix",
+      "id": "Flex",
+      "name": "Flex",
       "description": "Movies and TV shows with direct HLS streaming",
       "version": "7.0.0",
       "author": "Nuvio Team",
