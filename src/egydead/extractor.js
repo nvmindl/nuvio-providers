@@ -48,8 +48,8 @@ async function searchEgyDead(title, year, mediaType) {
     var candidates = [];
     while ((m = linkRe.exec(html)) !== null) {
         var url = m[1];
-        // Skip navigation/category/tag/feed/wp links
-        if (/page\/|type\/|category\/|tag\/|wp-|feed\/|xmlrpc|comments/.test(url)) continue;
+        // Skip navigation, collection, season, serie, feed, wp links
+        if (/page\/|type\/|category\/|tag\/|wp-|feed\/|xmlrpc|comments|\/assembly\/|\/season\/|\/serie\/|\/search\//.test(url)) continue;
         if (candidates.indexOf(url) < 0) candidates.push(url);
     }
 
@@ -63,7 +63,8 @@ async function searchEgyDead(title, year, mediaType) {
     var best = '';
     var bestScore = 0;
     for (var i = 0; i < candidates.length; i++) {
-        var c = candidates[i].toLowerCase();
+        var c;
+        try { c = decodeURIComponent(candidates[i]).toLowerCase(); } catch (e) { c = candidates[i].toLowerCase(); }
         // Skip episode links for movie searches
         if (mediaType === 'movie' && c.indexOf('/episode/') > -1) continue;
         // For TV, prefer episode-style links
@@ -192,7 +193,7 @@ function extractM3u8FromDecoded(decoded) {
 async function extractFromEmbed(embedUrl) {
     var html = await fetchText(embedUrl, {
         headers: { 'Referer': getBaseUrl() + '/' },
-        timeout: 12000,
+        timeout: 8000,
     });
     if (!html) return '';
 
@@ -212,6 +213,10 @@ async function extractFromEmbed(embedUrl) {
     // 3) Any m3u8 URL in the raw page
     var anyM3u8 = html.match(/https?:\/\/[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?/);
     if (anyM3u8) return anyM3u8[0];
+
+    // 4) Any mp4 URL in the raw page (fallback)
+    var anyMp4 = html.match(/(?:file|source|src)\s*[:=]\s*["'](https?:\/\/[^"']*\.mp4[^"']*)["']/i);
+    if (anyMp4) return anyMp4[1];
 
     return '';
 }
@@ -312,11 +317,13 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
     console.log('[EgyDead] Found ' + embeds.length + ' embed(s)');
 
-    // Prioritize PACK-decodable servers (stmruby, forafile)
+    // Prioritize PACK-decodable servers (stmruby, forafile), skip known-unreachable ones
     var prioritized = [];
     var others = [];
     for (var i = 0; i < embeds.length; i++) {
         var url = embeds[i];
+        // Skip servers known to be unreachable or require JS execution
+        if (/dsvplay|minochinos|listeamed|hgcloud/.test(url)) continue;
         if (/stmruby|streamruby|forafile/.test(url)) {
             prioritized.push(url);
         } else {
@@ -328,7 +335,7 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     // Try each embed, collect streams
     var streams = [];
     var tried = 0;
-    var MAX_TRIES = 4;
+    var MAX_TRIES = 6;
 
     for (var j = 0; j < ordered.length && tried < MAX_TRIES; j++) {
         var embedUrl = ordered[j];

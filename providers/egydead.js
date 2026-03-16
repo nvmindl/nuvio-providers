@@ -1,6 +1,6 @@
 /**
  * egydead - Built from src/egydead/
- * Generated: 2026-03-16T03:11:10.463Z
+ * Generated: 2026-03-16T03:30:59.164Z
  */
 var __defProp = Object.defineProperty;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -129,7 +129,7 @@ function searchEgyDead(title, year, mediaType) {
     var candidates = [];
     while ((m = linkRe.exec(html)) !== null) {
       var url = m[1];
-      if (/page\/|type\/|category\/|tag\/|wp-|feed\/|xmlrpc|comments/.test(url))
+      if (/page\/|type\/|category\/|tag\/|wp-|feed\/|xmlrpc|comments|\/assembly\/|\/season\/|\/serie\/|\/search\//.test(url))
         continue;
       if (candidates.indexOf(url) < 0)
         candidates.push(url);
@@ -143,7 +143,12 @@ function searchEgyDead(title, year, mediaType) {
     var best = "";
     var bestScore = 0;
     for (var i = 0; i < candidates.length; i++) {
-      var c = candidates[i].toLowerCase();
+      var c;
+      try {
+        c = decodeURIComponent(candidates[i]).toLowerCase();
+      } catch (e) {
+        c = candidates[i].toLowerCase();
+      }
       if (mediaType === "movie" && c.indexOf("/episode/") > -1)
         continue;
       if (mediaType === "tv" && c.indexOf("/episode/") < 0)
@@ -247,7 +252,7 @@ function extractFromEmbed(embedUrl) {
   return __async(this, null, function* () {
     var html = yield fetchText(embedUrl, {
       headers: { "Referer": getBaseUrl() + "/" },
-      timeout: 12e3
+      timeout: 8e3
     });
     if (!html)
       return "";
@@ -265,6 +270,9 @@ function extractFromEmbed(embedUrl) {
     var anyM3u8 = html.match(/https?:\/\/[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?/);
     if (anyM3u8)
       return anyM3u8[0];
+    var anyMp4 = html.match(/(?:file|source|src)\s*[:=]\s*["'](https?:\/\/[^"']*\.mp4[^"']*)["']/i);
+    if (anyMp4)
+      return anyMp4[1];
     return "";
   });
 }
@@ -354,6 +362,8 @@ function extractStreams(tmdbId, mediaType, season, episode) {
     var others = [];
     for (var i = 0; i < embeds.length; i++) {
       var url = embeds[i];
+      if (/dsvplay|minochinos|listeamed|hgcloud/.test(url))
+        continue;
       if (/stmruby|streamruby|forafile/.test(url)) {
         prioritized.push(url);
       } else {
@@ -363,7 +373,7 @@ function extractStreams(tmdbId, mediaType, season, episode) {
     var ordered = prioritized.concat(others);
     var streams = [];
     var tried = 0;
-    var MAX_TRIES = 4;
+    var MAX_TRIES = 6;
     for (var j = 0; j < ordered.length && tried < MAX_TRIES; j++) {
       var embedUrl = ordered[j];
       var serverName = getServerName(embedUrl);
