@@ -44,6 +44,28 @@
         "ar",
         "tr"
       ]
+    },
+    {
+      "id": "EgyDead",
+      "name": "EgyDead",
+      "description": "Arabic movies, series & anime with multi-server HLS streaming",
+      "version": "1.0.0",
+      "author": "Nuvio Team",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/egydead.js",
+      "enabled": true,
+      "formats": [
+        "m3u8"
+      ],
+      "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/egydead.png",
+      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/egydead.png",
+      "contentLanguage": [
+        "ar",
+        "en"
+      ]
     }
   ]
 }
