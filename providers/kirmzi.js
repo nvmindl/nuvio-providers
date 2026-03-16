@@ -1,6 +1,6 @@
 /**
  * kirmzi - Built from src/kirmzi/
- * Generated: 2026-03-15T23:49:12.617Z
+ * Generated: 2026-03-16T01:48:10.699Z
  */
 var __defProp = Object.defineProperty;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -88,6 +88,7 @@ function fetchText(url, options) {
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_API_BASE = "https://api.themoviedb.org/3";
 var ALBA_BASE = "https://w.shadwo.pro/albaplayer";
+var T123_BASE = "https://turkish123.ac";
 function resolveTmdbMeta(tmdbId) {
   return __async(this, null, function* () {
     var arUrl = TMDB_API_BASE + "/tv/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=ar-SA";
@@ -382,6 +383,32 @@ function buildStreams(result) {
     headers
   }];
 }
+function buildT123Streams(result) {
+  if (!result || !result.m3u8)
+    return [];
+  var headers = buildStreamHeaders(result.embedUrl);
+  var variants = deriveVariantUrls(result.m3u8);
+  if (variants.length > 0) {
+    var streams = [];
+    for (var i = 0; i < variants.length; i++) {
+      streams.push({
+        name: "Kirmzi - " + variants[i].quality,
+        title: variants[i].quality,
+        url: variants[i].url,
+        quality: variants[i].quality,
+        headers
+      });
+    }
+    return streams;
+  }
+  return [{
+    name: "Kirmzi - Auto",
+    title: "Auto",
+    url: result.m3u8,
+    quality: "auto",
+    headers
+  }];
+}
 function extractSeriesUrls(html) {
   var urls = [];
   var re = /href="(https?:\/\/[^"]*\/series\/[^"]*)"/gi;
@@ -489,6 +516,154 @@ function raceAlbaSlugs(slugs) {
     return null;
   });
 }
+function buildT123Slugs(meta) {
+  var seen = {};
+  var slugs = [];
+  function add(base) {
+    if (!base || seen[base])
+      return;
+    seen[base] = true;
+    slugs.push(base);
+  }
+  if (meta.originalTitle) {
+    add(romanizeToSlug(meta.originalTitle));
+    add(romanizeToSlug(meta.originalTitle.split(":")[0].trim()));
+  }
+  if (meta.englishTitle) {
+    add(meta.englishTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
+    var noThe = meta.englishTitle.replace(/^the\s+/i, "");
+    if (noThe !== meta.englishTitle)
+      add(noThe.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
+  }
+  return slugs;
+}
+function computeAbsoluteEpisode(tmdbId, season, episode) {
+  return __async(this, null, function* () {
+    var s = parseInt(season, 10);
+    var e = parseInt(episode, 10);
+    if (s <= 1)
+      return e;
+    var total = 0;
+    for (var i = 1; i < s; i++) {
+      var url = TMDB_API_BASE + "/tv/" + tmdbId + "/season/" + i + "?api_key=" + TMDB_API_KEY;
+      try {
+        var r = yield fetch(url, { method: "GET", headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" } });
+        if (r.ok) {
+          var data = yield r.json();
+          total += data.episodes ? data.episodes.length : 0;
+        }
+      } catch (err) {
+      }
+    }
+    return total + e;
+  });
+}
+function findT123Slug(meta) {
+  return __async(this, null, function* () {
+    var slugs = buildT123Slugs(meta);
+    var checks = yield Promise.all(slugs.map(function(s) {
+      var url = T123_BASE + "/" + s + "/";
+      return fetchText(url, { timeout: 8e3 }).then(function(html) {
+        if (html && html.indexOf("episodi") > -1)
+          return s;
+        return null;
+      }).catch(function() {
+        return null;
+      });
+    }));
+    for (var i = 0; i < checks.length; i++) {
+      if (checks[i])
+        return checks[i];
+    }
+    var terms = [];
+    if (meta.originalTitle && terms.indexOf(meta.originalTitle) < 0)
+      terms.push(meta.originalTitle);
+    if (meta.englishTitle && terms.indexOf(meta.englishTitle) < 0)
+      terms.push(meta.englishTitle);
+    for (var t = 0; t < terms.length; t++) {
+      var searchUrl = T123_BASE + "/?s=" + encodeURIComponent(terms[t]);
+      var searchHtml = yield fetchText(searchUrl, { timeout: 8e3 });
+      if (!searchHtml)
+        continue;
+      var re = /href="https:\/\/turkish123\.ac\/([a-z0-9-]+)\/"/g;
+      var m;
+      while ((m = re.exec(searchHtml)) !== null) {
+        var slug = m[1];
+        if (!/genre|year|series-list|episodes-list|calendar|contact|home|page|wp-|tag|category|sitemap|about|ryh6/.test(slug)) {
+          return slug;
+        }
+      }
+    }
+    return null;
+  });
+}
+function extractT123Embeds(html) {
+  var embeds = [];
+  var re = /iframe[^>]*src="(https?:\/\/(?:tukipasti|kitraskimisi|engifuosi|rufiiguta|lajkema)[^"]+)"/gi;
+  var m;
+  while ((m = re.exec(html)) !== null) {
+    embeds.push(m[1]);
+  }
+  return embeds;
+}
+function extractM3u8FromT123Embed(embedUrl) {
+  return __async(this, null, function* () {
+    var html = yield fetchText(embedUrl, { timeout: 8e3 });
+    if (!html)
+      return null;
+    var m3u8 = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
+    if (m3u8)
+      return m3u8[0];
+    var packed = extractPackedBlock(html);
+    if (packed) {
+      var unpacked = unpackPACK(packed);
+      if (unpacked) {
+        var m3u8b = extractM3u8FromUnpacked(unpacked);
+        if (m3u8b)
+          return m3u8b;
+      }
+    }
+    return null;
+  });
+}
+function extractFromT123(meta, tmdbId, season, episode) {
+  return __async(this, null, function* () {
+    console.log("[Kirmzi] Trying turkish123 backup...");
+    var slug = yield findT123Slug(meta);
+    if (!slug) {
+      console.log("[Kirmzi] turkish123: show not found");
+      return null;
+    }
+    console.log('[Kirmzi] turkish123: found slug "' + slug + '"');
+    var absEp = yield computeAbsoluteEpisode(tmdbId, season, episode);
+    var epUrl = T123_BASE + "/" + slug + "-episode-" + absEp + "/";
+    console.log("[Kirmzi] turkish123: fetching episode " + absEp);
+    var epHtml = yield fetchText(epUrl, { timeout: 8e3 });
+    if (!epHtml || epHtml.indexOf("iframe") < 0) {
+      console.log("[Kirmzi] turkish123: episode page empty or no embeds");
+      return null;
+    }
+    var embeds = extractT123Embeds(epHtml);
+    if (embeds.length === 0) {
+      console.log("[Kirmzi] turkish123: no embed iframes found");
+      return null;
+    }
+    console.log("[Kirmzi] turkish123: found " + embeds.length + " embeds");
+    var results = yield Promise.all(embeds.map(function(u) {
+      return extractM3u8FromT123Embed(u).catch(function() {
+        return null;
+      });
+    }));
+    for (var i = 0; i < results.length; i++) {
+      if (results[i]) {
+        console.log("[Kirmzi] turkish123: got m3u8 from " + embeds[i].match(/\/\/([^\/]+)/)[1]);
+        return { m3u8: results[i], embedUrl: embeds[i] };
+      }
+    }
+    console.log("[Kirmzi] turkish123: no m3u8 extracted from embeds");
+    return null;
+  });
+}
 function extractStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     if (mediaType !== "tv") {
@@ -510,7 +685,13 @@ function extractStreams(tmdbId, mediaType, season, episode) {
     var result = yield raceAlbaSlugs(candidateSlugs);
     if (result)
       return buildStreams(result);
-    console.log("[Kirmzi] Alba slugs failed, trying kirmzi site...");
+    var t123Result = yield extractFromT123(meta, tmdbId, season, episode);
+    if (t123Result) {
+      var t123Streams = buildT123Streams(t123Result);
+      if (t123Streams.length > 0)
+        return t123Streams;
+    }
+    console.log("[Kirmzi] Backup failed, trying kirmzi site...");
     var albaUrl = "";
     if (meta.arabicTitle) {
       var episodeUrl = buildEpisodeUrl(meta.arabicTitle, episode);

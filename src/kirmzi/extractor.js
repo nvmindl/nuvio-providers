@@ -3,6 +3,7 @@ import { HEADERS, fetchText, getBaseUrl } from './http.js';
 var TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 var TMDB_API_BASE = 'https://api.themoviedb.org/3';
 var ALBA_BASE = 'https://w.shadwo.pro/albaplayer';
+var T123_BASE = 'https://turkish123.ac';
 
 // ─── TMDB helpers ───────────────────────────────────────────────────────────
 
@@ -351,6 +352,34 @@ function buildStreams(result) {
     }];
 }
 
+function buildT123Streams(result) {
+    if (!result || !result.m3u8) return [];
+    var headers = buildStreamHeaders(result.embedUrl);
+    // turkish123 embeds give a single m3u8, not a master playlist
+    // Try deriving variants first (some CDNs use the same pattern)
+    var variants = deriveVariantUrls(result.m3u8);
+    if (variants.length > 0) {
+        var streams = [];
+        for (var i = 0; i < variants.length; i++) {
+            streams.push({
+                name: 'Kirmzi - ' + variants[i].quality,
+                title: variants[i].quality,
+                url: variants[i].url,
+                quality: variants[i].quality,
+                headers: headers,
+            });
+        }
+        return streams;
+    }
+    return [{
+        name: 'Kirmzi - Auto',
+        title: 'Auto',
+        url: result.m3u8,
+        quality: 'auto',
+        headers: headers,
+    }];
+}
+
 // ─── Search-based episode discovery ─────────────────────────────────────────
 
 function extractSeriesUrls(html) {
@@ -458,6 +487,146 @@ async function raceAlbaSlugs(slugs) {
     return null;
 }
 
+// ─── turkish123 backup ──────────────────────────────────────────────────────
+
+function buildT123Slugs(meta) {
+    var seen = {};
+    var slugs = [];
+    function add(base) {
+        if (!base || seen[base]) return;
+        seen[base] = true;
+        slugs.push(base);
+    }
+    if (meta.originalTitle) {
+        add(romanizeToSlug(meta.originalTitle));
+        add(romanizeToSlug(meta.originalTitle.split(':')[0].trim()));
+    }
+    if (meta.englishTitle) {
+        add(meta.englishTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
+        var noThe = meta.englishTitle.replace(/^the\s+/i, '');
+        if (noThe !== meta.englishTitle) add(noThe.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
+    }
+    return slugs;
+}
+
+async function computeAbsoluteEpisode(tmdbId, season, episode) {
+    var s = parseInt(season, 10);
+    var e = parseInt(episode, 10);
+    if (s <= 1) return e;
+    // Fetch season details from TMDB to sum prior episodes
+    var total = 0;
+    for (var i = 1; i < s; i++) {
+        var url = TMDB_API_BASE + '/tv/' + tmdbId + '/season/' + i + '?api_key=' + TMDB_API_KEY;
+        try {
+            var r = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' } });
+            if (r.ok) {
+                var data = await r.json();
+                total += (data.episodes ? data.episodes.length : 0);
+            }
+        } catch(err) { /* skip */ }
+    }
+    return total + e;
+}
+
+async function findT123Slug(meta) {
+    var slugs = buildT123Slugs(meta);
+    // Try direct slug access in parallel
+    var checks = await Promise.all(slugs.map(function(s) {
+        var url = T123_BASE + '/' + s + '/';
+        return fetchText(url, { timeout: 8000 }).then(function(html) {
+            if (html && html.indexOf('episodi') > -1) return s;
+            return null;
+        }).catch(function() { return null; });
+    }));
+    for (var i = 0; i < checks.length; i++) {
+        if (checks[i]) return checks[i];
+    }
+    // Fallback: search
+    var terms = [];
+    if (meta.originalTitle && terms.indexOf(meta.originalTitle) < 0) terms.push(meta.originalTitle);
+    if (meta.englishTitle && terms.indexOf(meta.englishTitle) < 0) terms.push(meta.englishTitle);
+    for (var t = 0; t < terms.length; t++) {
+        var searchUrl = T123_BASE + '/?s=' + encodeURIComponent(terms[t]);
+        var searchHtml = await fetchText(searchUrl, { timeout: 8000 });
+        if (!searchHtml) continue;
+        var re = /href="https:\/\/turkish123\.ac\/([a-z0-9-]+)\/"/g;
+        var m;
+        while ((m = re.exec(searchHtml)) !== null) {
+            var slug = m[1];
+            if (!/genre|year|series-list|episodes-list|calendar|contact|home|page|wp-|tag|category|sitemap|about|ryh6/.test(slug)) {
+                return slug;
+            }
+        }
+    }
+    return null;
+}
+
+function extractT123Embeds(html) {
+    var embeds = [];
+    var re = /iframe[^>]*src="(https?:\/\/(?:tukipasti|kitraskimisi|engifuosi|rufiiguta|lajkema)[^"]+)"/gi;
+    var m;
+    while ((m = re.exec(html)) !== null) {
+        embeds.push(m[1]);
+    }
+    return embeds;
+}
+
+async function extractM3u8FromT123Embed(embedUrl) {
+    var html = await fetchText(embedUrl, { timeout: 8000 });
+    if (!html) return null;
+    var m3u8 = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
+    if (m3u8) return m3u8[0];
+    // Try PACK method if direct m3u8 not found
+    var packed = extractPackedBlock(html);
+    if (packed) {
+        var unpacked = unpackPACK(packed);
+        if (unpacked) {
+            var m3u8b = extractM3u8FromUnpacked(unpacked);
+            if (m3u8b) return m3u8b;
+        }
+    }
+    return null;
+}
+
+async function extractFromT123(meta, tmdbId, season, episode) {
+    console.log('[Kirmzi] Trying turkish123 backup...');
+    var slug = await findT123Slug(meta);
+    if (!slug) {
+        console.log('[Kirmzi] turkish123: show not found');
+        return null;
+    }
+    console.log('[Kirmzi] turkish123: found slug "' + slug + '"');
+
+    var absEp = await computeAbsoluteEpisode(tmdbId, season, episode);
+    var epUrl = T123_BASE + '/' + slug + '-episode-' + absEp + '/';
+    console.log('[Kirmzi] turkish123: fetching episode ' + absEp);
+    var epHtml = await fetchText(epUrl, { timeout: 8000 });
+    if (!epHtml || epHtml.indexOf('iframe') < 0) {
+        console.log('[Kirmzi] turkish123: episode page empty or no embeds');
+        return null;
+    }
+
+    var embeds = extractT123Embeds(epHtml);
+    if (embeds.length === 0) {
+        console.log('[Kirmzi] turkish123: no embed iframes found');
+        return null;
+    }
+    console.log('[Kirmzi] turkish123: found ' + embeds.length + ' embeds');
+
+    // Try all embeds in parallel — first m3u8 wins
+    var results = await Promise.all(embeds.map(function(u) {
+        return extractM3u8FromT123Embed(u).catch(function() { return null; });
+    }));
+    for (var i = 0; i < results.length; i++) {
+        if (results[i]) {
+            console.log('[Kirmzi] turkish123: got m3u8 from ' + embeds[i].match(/\/\/([^\/]+)/)[1]);
+            return { m3u8: results[i], embedUrl: embeds[i] };
+        }
+    }
+    console.log('[Kirmzi] turkish123: no m3u8 extracted from embeds');
+    return null;
+}
+
 // ─── Main entry point ───────────────────────────────────────────────────────
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
@@ -477,13 +646,20 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
     console.log('[Kirmzi] Titles: AR=' + meta.arabicTitle + ' EN=' + meta.englishTitle + ' ORIG=' + meta.originalTitle);
 
-    // ── FAST PATH: direct albaplayer slugs (no kirmzi.space needed) ──
+    // ── FAST PATH: direct albaplayer slugs (primary) ──
     var candidateSlugs = buildAlbaSlugs(meta, season, episode);
     var result = await raceAlbaSlugs(candidateSlugs);
     if (result) return buildStreams(result);
 
-    // ── FALLBACK: try kirmzi.space (5s timeout) ──
-    console.log('[Kirmzi] Alba slugs failed, trying kirmzi site...');
+    // ── BACKUP: turkish123 ──
+    var t123Result = await extractFromT123(meta, tmdbId, season, episode);
+    if (t123Result) {
+        var t123Streams = buildT123Streams(t123Result);
+        if (t123Streams.length > 0) return t123Streams;
+    }
+
+    // ── LAST RESORT: try kirmzi.space (5s timeout) ──
+    console.log('[Kirmzi] Backup failed, trying kirmzi site...');
     var albaUrl = '';
     if (meta.arabicTitle) {
         var episodeUrl = buildEpisodeUrl(meta.arabicTitle, episode);
