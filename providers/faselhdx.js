@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-19T22:12:28.631Z
+ * Generated: 2026-03-19T22:37:10.738Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -78,7 +78,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       if (stremioType === "series" && season && episode) {
         stremioId += ":" + season + ":" + episode;
       }
-      var apiUrl = ADDON_URL + "/stream/" + stremioType + "/" + stremioId + ".json";
+      var apiUrl = ADDON_URL + "/streams/" + stremioType + "/" + stremioId + ".json";
       console.log("[FaselHD] API: " + apiUrl);
       var resp = yield fetch(apiUrl, {
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
