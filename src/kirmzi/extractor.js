@@ -195,7 +195,21 @@ function extractM3u8FromUnpacked(unpacked) {
     var fallback = unpacked.match(/https?:\/\/[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?/);
     return fallback ? fallback[0] : '';
 }
+function extractMp4FromUnpacked(unpacked) {
+    // Look for MP4 URL in the unpacked JWPlayer setup (download or alternate source)
+    var mp4Match = unpacked.match(/(?:file|src|download)\s*:\s*"(https?:\/\/[^"]*\.mp4[^"]*)"/);
+    if (mp4Match) return mp4Match[1];
+    // Fallback: any MP4 URL
+    var fallback = unpacked.match(/https?:\/\/[^\s"'<>]+\.mp4(?:\?[^\s"'<>]*)?/);
+    return fallback ? fallback[0] : '';
+}
 
+function extractMp4FromHtml(html) {
+    // Look for direct MP4 links or download URLs in the page HTML
+    var mp4Match = html.match(/(?:href|src)=["'](https?:\/\/[^"']*\.mp4[^"']*)["']/i);
+    if (mp4Match) return mp4Match[1];
+    return '';
+}
 // ─── Try multiple embed servers ─────────────────────────────────────────────
 
 async function tryExtractFromAlba(albaUrl) {
@@ -259,17 +273,26 @@ async function tryExtractFromEmbed(embedUrl) {
     var html = await fetchText(embedUrl);
     if (!html) return null;
 
+    // Check for direct MP4 links in the HTML
+    var mp4 = extractMp4FromHtml(html);
+
     // Find packed JS using paren balancing
     var packed = extractPackedBlock(html);
-    if (!packed) return null;
+    if (!packed && !mp4) return null;
 
-    var unpacked = unpackPACK(packed);
-    if (!unpacked) return null;
+    var m3u8 = '';
+    if (packed) {
+        var unpacked = unpackPACK(packed);
+        if (unpacked) {
+            m3u8 = extractM3u8FromUnpacked(unpacked);
+            // Also look for MP4 in unpacked JWPlayer config
+            if (!mp4) mp4 = extractMp4FromUnpacked(unpacked);
+        }
+    }
 
-    var m3u8 = extractM3u8FromUnpacked(unpacked);
-    if (!m3u8) return null;
+    if (!m3u8 && !mp4) return null;
 
-    return { m3u8: m3u8, embedUrl: embedUrl };
+    return { m3u8: m3u8, mp4: mp4, embedUrl: embedUrl };
 }
 
 // ─── Build streams ──────────────────────────────────────────────────────────
@@ -321,63 +344,89 @@ function buildStreamHeaders(embedUrl) {
 }
 
 function buildStreams(result) {
-    if (!result || !result.m3u8) return [];
+    if (!result || (!result.m3u8 && !result.mp4)) return [];
 
     var headers = buildStreamHeaders(result.embedUrl);
+    var streams = [];
 
-    // Derive variant URLs directly from the master URL pattern (no extra fetch)
-    var variants = deriveVariantUrls(result.m3u8);
-    if (variants.length > 0) {
-        var streams = [];
-        for (var i = 0; i < variants.length; i++) {
-            var v = variants[i];
+    // HLS streams for playback
+    if (result.m3u8) {
+        var variants = deriveVariantUrls(result.m3u8);
+        if (variants.length > 0) {
+            for (var i = 0; i < variants.length; i++) {
+                var v = variants[i];
+                streams.push({
+                    name: 'Kirmzi - ' + v.quality,
+                    title: v.quality,
+                    url: v.url,
+                    quality: v.quality,
+                    headers: headers,
+                });
+            }
+        } else {
             streams.push({
-                name: 'Kirmzi - ' + v.quality,
-                title: v.quality,
-                url: v.url,
-                quality: v.quality,
+                name: 'Kirmzi - Auto',
+                title: 'Auto',
+                url: result.m3u8,
+                quality: 'auto',
                 headers: headers,
             });
         }
-        return streams;
     }
 
-    // Fallback: return the master URL if pattern doesn't match
-    return [{
-        name: 'Kirmzi - Auto',
-        title: 'Auto',
-        url: result.m3u8,
-        quality: 'auto',
-        headers: headers,
-    }];
+    // MP4 stream for downloading
+    if (result.mp4) {
+        streams.push({
+            name: 'Kirmzi - Download',
+            title: 'MP4 Download',
+            url: result.mp4,
+            quality: 'auto',
+            headers: headers,
+        });
+    }
+
+    return streams;
 }
 
 function buildT123Streams(result) {
-    if (!result || !result.m3u8) return [];
+    if (!result || (!result.m3u8 && !result.mp4)) return [];
     var headers = buildStreamHeaders(result.embedUrl);
-    // turkish123 embeds give a single m3u8, not a master playlist
-    // Try deriving variants first (some CDNs use the same pattern)
-    var variants = deriveVariantUrls(result.m3u8);
-    if (variants.length > 0) {
-        var streams = [];
-        for (var i = 0; i < variants.length; i++) {
+    var streams = [];
+
+    if (result.m3u8) {
+        var variants = deriveVariantUrls(result.m3u8);
+        if (variants.length > 0) {
+            for (var i = 0; i < variants.length; i++) {
+                streams.push({
+                    name: 'Kirmzi - ' + variants[i].quality,
+                    title: variants[i].quality,
+                    url: variants[i].url,
+                    quality: variants[i].quality,
+                    headers: headers,
+                });
+            }
+        } else {
             streams.push({
-                name: 'Kirmzi - ' + variants[i].quality,
-                title: variants[i].quality,
-                url: variants[i].url,
-                quality: variants[i].quality,
+                name: 'Kirmzi - Auto',
+                title: 'Auto',
+                url: result.m3u8,
+                quality: 'auto',
                 headers: headers,
             });
         }
-        return streams;
     }
-    return [{
-        name: 'Kirmzi - Auto',
-        title: 'Auto',
-        url: result.m3u8,
-        quality: 'auto',
-        headers: headers,
-    }];
+
+    if (result.mp4) {
+        streams.push({
+            name: 'Kirmzi - Download',
+            title: 'MP4 Download',
+            url: result.mp4,
+            quality: 'auto',
+            headers: headers,
+        });
+    }
+
+    return streams;
 }
 
 // ─── Search-based episode discovery ─────────────────────────────────────────
@@ -574,18 +623,23 @@ function extractT123Embeds(html) {
 async function extractM3u8FromT123Embed(embedUrl) {
     var html = await fetchText(embedUrl, { timeout: 8000 });
     if (!html) return null;
-    var m3u8 = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
-    if (m3u8) return m3u8[0];
-    // Try PACK method if direct m3u8 not found
+    var m3u8 = '';
+    var mp4 = '';
+    var m3u8Direct = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
+    if (m3u8Direct) m3u8 = m3u8Direct[0];
+    var mp4Direct = extractMp4FromHtml(html);
+    if (mp4Direct) mp4 = mp4Direct;
+    // Try PACK method for additional sources
     var packed = extractPackedBlock(html);
     if (packed) {
         var unpacked = unpackPACK(packed);
         if (unpacked) {
-            var m3u8b = extractM3u8FromUnpacked(unpacked);
-            if (m3u8b) return m3u8b;
+            if (!m3u8) m3u8 = extractM3u8FromUnpacked(unpacked);
+            if (!mp4) mp4 = extractMp4FromUnpacked(unpacked);
         }
     }
-    return null;
+    if (!m3u8 && !mp4) return null;
+    return { m3u8: m3u8, mp4: mp4 };
 }
 
 async function extractFromT123(meta, tmdbId, season, episode) {
@@ -619,8 +673,8 @@ async function extractFromT123(meta, tmdbId, season, episode) {
     }));
     for (var i = 0; i < results.length; i++) {
         if (results[i]) {
-            console.log('[Kirmzi] turkish123: got m3u8 from ' + embeds[i].match(/\/\/([^\/]+)/)[1]);
-            return { m3u8: results[i], embedUrl: embeds[i] };
+            console.log('[Kirmzi] turkish123: got stream from ' + embeds[i].match(/\/\/([^\/]+)/)[1]);
+            return { m3u8: results[i].m3u8 || '', mp4: results[i].mp4 || '', embedUrl: embeds[i] };
         }
     }
     console.log('[Kirmzi] turkish123: no m3u8 extracted from embeds');

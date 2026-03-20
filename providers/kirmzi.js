@@ -1,6 +1,6 @@
 /**
  * kirmzi - Built from src/kirmzi/
- * Generated: 2026-03-16T01:48:10.699Z
+ * Generated: 2026-03-20T21:53:15.127Z
  */
 var __defProp = Object.defineProperty;
 var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -239,6 +239,19 @@ function extractM3u8FromUnpacked(unpacked) {
   var fallback = unpacked.match(/https?:\/\/[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?/);
   return fallback ? fallback[0] : "";
 }
+function extractMp4FromUnpacked(unpacked) {
+  var mp4Match = unpacked.match(/(?:file|src|download)\s*:\s*"(https?:\/\/[^"]*\.mp4[^"]*)"/);
+  if (mp4Match)
+    return mp4Match[1];
+  var fallback = unpacked.match(/https?:\/\/[^\s"'<>]+\.mp4(?:\?[^\s"'<>]*)?/);
+  return fallback ? fallback[0] : "";
+}
+function extractMp4FromHtml(html) {
+  var mp4Match = html.match(/(?:href|src)=["'](https?:\/\/[^"']*\.mp4[^"']*)["']/i);
+  if (mp4Match)
+    return mp4Match[1];
+  return "";
+}
 function tryExtractFromAlba(albaUrl) {
   return __async(this, null, function* () {
     var html = yield fetchText(albaUrl);
@@ -304,16 +317,22 @@ function tryExtractFromEmbed(embedUrl) {
     var html = yield fetchText(embedUrl);
     if (!html)
       return null;
+    var mp4 = extractMp4FromHtml(html);
     var packed = extractPackedBlock(html);
-    if (!packed)
+    if (!packed && !mp4)
       return null;
-    var unpacked = unpackPACK(packed);
-    if (!unpacked)
+    var m3u8 = "";
+    if (packed) {
+      var unpacked = unpackPACK(packed);
+      if (unpacked) {
+        m3u8 = extractM3u8FromUnpacked(unpacked);
+        if (!mp4)
+          mp4 = extractMp4FromUnpacked(unpacked);
+      }
+    }
+    if (!m3u8 && !mp4)
       return null;
-    var m3u8 = extractM3u8FromUnpacked(unpacked);
-    if (!m3u8)
-      return null;
-    return { m3u8, embedUrl };
+    return { m3u8, mp4, embedUrl };
   });
 }
 var SUFFIX_QUALITY = { x: "1080p", h: "720p", n: "480p", l: "360p" };
@@ -357,57 +376,81 @@ function buildStreamHeaders(embedUrl) {
   };
 }
 function buildStreams(result) {
-  if (!result || !result.m3u8)
+  if (!result || !result.m3u8 && !result.mp4)
     return [];
   var headers = buildStreamHeaders(result.embedUrl);
-  var variants = deriveVariantUrls(result.m3u8);
-  if (variants.length > 0) {
-    var streams = [];
-    for (var i = 0; i < variants.length; i++) {
-      var v = variants[i];
+  var streams = [];
+  if (result.m3u8) {
+    var variants = deriveVariantUrls(result.m3u8);
+    if (variants.length > 0) {
+      for (var i = 0; i < variants.length; i++) {
+        var v = variants[i];
+        streams.push({
+          name: "Kirmzi - " + v.quality,
+          title: v.quality,
+          url: v.url,
+          quality: v.quality,
+          headers
+        });
+      }
+    } else {
       streams.push({
-        name: "Kirmzi - " + v.quality,
-        title: v.quality,
-        url: v.url,
-        quality: v.quality,
+        name: "Kirmzi - Auto",
+        title: "Auto",
+        url: result.m3u8,
+        quality: "auto",
         headers
       });
     }
-    return streams;
   }
-  return [{
-    name: "Kirmzi - Auto",
-    title: "Auto",
-    url: result.m3u8,
-    quality: "auto",
-    headers
-  }];
+  if (result.mp4) {
+    streams.push({
+      name: "Kirmzi - Download",
+      title: "MP4 Download",
+      url: result.mp4,
+      quality: "auto",
+      headers
+    });
+  }
+  return streams;
 }
 function buildT123Streams(result) {
-  if (!result || !result.m3u8)
+  if (!result || !result.m3u8 && !result.mp4)
     return [];
   var headers = buildStreamHeaders(result.embedUrl);
-  var variants = deriveVariantUrls(result.m3u8);
-  if (variants.length > 0) {
-    var streams = [];
-    for (var i = 0; i < variants.length; i++) {
+  var streams = [];
+  if (result.m3u8) {
+    var variants = deriveVariantUrls(result.m3u8);
+    if (variants.length > 0) {
+      for (var i = 0; i < variants.length; i++) {
+        streams.push({
+          name: "Kirmzi - " + variants[i].quality,
+          title: variants[i].quality,
+          url: variants[i].url,
+          quality: variants[i].quality,
+          headers
+        });
+      }
+    } else {
       streams.push({
-        name: "Kirmzi - " + variants[i].quality,
-        title: variants[i].quality,
-        url: variants[i].url,
-        quality: variants[i].quality,
+        name: "Kirmzi - Auto",
+        title: "Auto",
+        url: result.m3u8,
+        quality: "auto",
         headers
       });
     }
-    return streams;
   }
-  return [{
-    name: "Kirmzi - Auto",
-    title: "Auto",
-    url: result.m3u8,
-    quality: "auto",
-    headers
-  }];
+  if (result.mp4) {
+    streams.push({
+      name: "Kirmzi - Download",
+      title: "MP4 Download",
+      url: result.mp4,
+      quality: "auto",
+      headers
+    });
+  }
+  return streams;
 }
 function extractSeriesUrls(html) {
   var urls = [];
@@ -611,19 +654,27 @@ function extractM3u8FromT123Embed(embedUrl) {
     var html = yield fetchText(embedUrl, { timeout: 8e3 });
     if (!html)
       return null;
-    var m3u8 = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
-    if (m3u8)
-      return m3u8[0];
+    var m3u8 = "";
+    var mp4 = "";
+    var m3u8Direct = html.match(/https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/);
+    if (m3u8Direct)
+      m3u8 = m3u8Direct[0];
+    var mp4Direct = extractMp4FromHtml(html);
+    if (mp4Direct)
+      mp4 = mp4Direct;
     var packed = extractPackedBlock(html);
     if (packed) {
       var unpacked = unpackPACK(packed);
       if (unpacked) {
-        var m3u8b = extractM3u8FromUnpacked(unpacked);
-        if (m3u8b)
-          return m3u8b;
+        if (!m3u8)
+          m3u8 = extractM3u8FromUnpacked(unpacked);
+        if (!mp4)
+          mp4 = extractMp4FromUnpacked(unpacked);
       }
     }
-    return null;
+    if (!m3u8 && !mp4)
+      return null;
+    return { m3u8, mp4 };
   });
 }
 function extractFromT123(meta, tmdbId, season, episode) {
@@ -656,8 +707,8 @@ function extractFromT123(meta, tmdbId, season, episode) {
     }));
     for (var i = 0; i < results.length; i++) {
       if (results[i]) {
-        console.log("[Kirmzi] turkish123: got m3u8 from " + embeds[i].match(/\/\/([^\/]+)/)[1]);
-        return { m3u8: results[i], embedUrl: embeds[i] };
+        console.log("[Kirmzi] turkish123: got stream from " + embeds[i].match(/\/\/([^\/]+)/)[1]);
+        return { m3u8: results[i].m3u8 || "", mp4: results[i].mp4 || "", embedUrl: embeds[i] };
       }
     }
     console.log("[Kirmzi] turkish123: no m3u8 extracted from embeds");
