@@ -3,9 +3,9 @@
   "version": "8.0.0",
   "scrapers": [
     {
-      "id": "Flex",
-      "name": "Flex",
-      "description": "Movies and TV shows with direct HLS streaming",
+      "id": "FaselHD",
+      "name": "FaselHD",
+      "description": "Arabic movies and TV shows with direct HLS streaming",
       "version": "8.0.0",
       "author": "Nuvio Team",
       "supportedTypes": [
