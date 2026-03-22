@@ -27,17 +27,6 @@ async function getTmdbMeta(tmdbId, mediaType) {
     }
 }
 
-function calcAbsoluteEp(seasons, seasonNum, episode) {
-    if (!seasons || !seasons.length || seasonNum <= 1) return episode;
-    var total = 0;
-    for (var i = 0; i < seasons.length; i++) {
-        if (seasons[i].season_number > 0 && seasons[i].season_number < seasonNum) {
-            total += seasons[i].episode_count || 0;
-        }
-    }
-    return total + episode;
-}
-
 // ── Search ──────────────────────────────────────────────────────────────────
 
 function slugify(t) {
@@ -45,6 +34,27 @@ function slugify(t) {
         .replace(/['']/g, '')
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-|-$/g, '');
+}
+
+function buildSearchQueries(meta) {
+    var queries = [];
+    if (meta.title) queries.push(meta.title);
+    if (meta.originalTitle && meta.originalTitle !== meta.title) {
+        queries.push(meta.originalTitle);
+    }
+    // Extract first word as a short fallback search
+    // "JoJo's Bizarre Adventure" → "JoJo"
+    if (meta.title) {
+        var first = meta.title.replace(/[''][s]?\s/g, ' ').split(/\s+/)[0];
+        if (first && first.length > 1) {
+            var dup = false;
+            for (var i = 0; i < queries.length; i++) {
+                if (queries[i].toLowerCase() === first.toLowerCase()) { dup = true; break; }
+            }
+            if (!dup) queries.push(first);
+        }
+    }
+    return queries;
 }
 
 async function searchAnime(base, title) {
@@ -69,21 +79,76 @@ async function searchAnime(base, title) {
     return results;
 }
 
-function pickBest(results, title) {
+function getSeasonName(meta, seasonNum) {
+    if (!meta.seasons) return '';
+    for (var i = 0; i < meta.seasons.length; i++) {
+        if (meta.seasons[i].season_number === seasonNum) {
+            return meta.seasons[i].name || '';
+        }
+    }
+    return '';
+}
+
+function pickBestWithSeason(results, title, seasonName) {
+    // Extract keywords from the TMDB season name (e.g., "Diamond Is Unbreakable" → ["diamond", "unbreakable"])
+    var seasonWords = [];
+    if (seasonName) {
+        seasonWords = slugify(seasonName).split('-').filter(function(w) {
+            return w.length > 2 && ['the', 'and', 'part', 'season'].indexOf(w) < 0;
+        });
+    }
+
     var ts = slugify(title);
-    var words = ts.split('-').filter(function(w) { return w.length > 2; });
+    var titleWords = ts.split('-').filter(function(w) { return w.length > 2; });
+
     var best = null;
     var bestScore = -1;
     for (var i = 0; i < results.length; i++) {
         var s = results[i].slug;
         var score = 0;
-        for (var j = 0; j < words.length; j++) {
-            if (s.indexOf(words[j]) > -1) score++;
+
+        // Title word matches (base relevance)
+        for (var j = 0; j < titleWords.length; j++) {
+            if (s.indexOf(titleWords[j]) > -1) score++;
         }
+
+        // Season name keyword matches (heavily weighted)
+        var seasonHits = 0;
+        for (var k = 0; k < seasonWords.length; k++) {
+            if (s.indexOf(seasonWords[k]) > -1) { score += 10; seasonHits++; }
+        }
+
+        // Exact slug match bonus
         if (s === ts) score += 5;
+
+        // Prefer shorter slug (main entry) when no season keywords match
+        if (seasonHits === 0 && seasonWords.length === 0) {
+            score += Math.max(0, 50 - s.length) * 0.1;
+        }
+
         if (score > bestScore) { bestScore = score; best = results[i]; }
     }
     return best;
+}
+
+async function findAnime(base, meta, season) {
+    var queries = buildSearchQueries(meta);
+    var results = [];
+    for (var i = 0; i < queries.length && results.length === 0; i++) {
+        results = await searchAnime(base, queries[i]);
+    }
+    if (results.length === 0) return null;
+
+    var sn = parseInt(season, 10) || 0;
+    var seasonName = sn > 0 ? getSeasonName(meta, sn) : '';
+    console.log('[WitAnime] Season name: ' + (seasonName || '(none)'));
+
+    var match = pickBestWithSeason(results, meta.title, seasonName);
+    if (!match && meta.originalTitle) {
+        match = pickBestWithSeason(results, meta.originalTitle, seasonName);
+    }
+    if (!match) match = results[0];
+    return match;
 }
 
 // ── Embed extraction ────────────────────────────────────────────────────────
@@ -234,42 +299,21 @@ export async function extractStreams(tmdbId, mediaType, season, episode) {
     }
     console.log('[WitAnime] ' + meta.title + ' (' + meta.year + ')');
 
-    // Search WitAnime
-    var results = await searchAnime(base, meta.title);
-    if (results.length === 0 && meta.originalTitle && meta.originalTitle !== meta.title) {
-        results = await searchAnime(base, meta.originalTitle);
-    }
-    if (results.length === 0) {
+    // Find the right anime entry (season-aware for multi-part anime)
+    var match = await findAnime(base, meta, season);
+    if (!match) {
         console.log('[WitAnime] Not found');
         return [];
     }
-
-    // Pick best matching anime
-    var match = pickBest(results, meta.title);
-    if (!match && meta.originalTitle) match = pickBest(results, meta.originalTitle);
-    if (!match) match = results[0];
     console.log('[WitAnime] Match: ' + match.slug);
 
-    // Calculate episode number
+    // Use per-season episode number (witanime lists each part separately)
     var ep = parseInt(episode, 10) || 1;
-    var sn = parseInt(season, 10) || 1;
-    if (mediaType !== 'movie' && sn > 1) {
-        ep = calcAbsoluteEp(meta.seasons, sn, ep);
-        console.log('[WitAnime] Absolute ep: ' + ep);
-    }
 
     // Build episode URL: /episode/{slug}-الحلقة-{num}/
     var epUrl = base + '/episode/' + match.slug + '-' + EP_SLUG + '-' + ep + '/';
     console.log('[WitAnime] Episode: ' + epUrl);
     var epHtml = await fetchText(epUrl);
-
-    // Fallback: try raw episode number if absolute calculation didn't work
-    if ((!epHtml || epHtml.length < 500) && sn > 1 && ep !== parseInt(episode, 10)) {
-        var rawEp = parseInt(episode, 10);
-        epUrl = base + '/episode/' + match.slug + '-' + EP_SLUG + '-' + rawEp + '/';
-        console.log('[WitAnime] Retry raw ep: ' + epUrl);
-        epHtml = await fetchText(epUrl);
-    }
 
     // Fallback for movies: try anime page directly
     if ((!epHtml || epHtml.length < 500) && mediaType === 'movie') {
