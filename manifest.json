@@ -46,25 +46,25 @@
       ]
     },
     {
-      "id": "EgyDead",
-      "name": "EgyDead",
-      "description": "Arabic movies, series & anime with multi-server HLS streaming",
-      "version": "1.0.1",
+      "id": "WitAnime",
+      "name": "WitAnime",
+      "description": "Arabic dubbed and subtitled anime from WitAnime",
+      "version": "1.0.0",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",
         "tv"
       ],
-      "filename": "providers/egydead.js",
+      "filename": "providers/witanime.js",
       "enabled": true,
       "formats": [
         "m3u8"
       ],
-      "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/egydead.png",
-      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/egydead.png",
+      "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/witanime.png",
+      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/witanime.png",
       "contentLanguage": [
         "ar",
-        "en"
+        "ja"
       ]
     }
   ]
