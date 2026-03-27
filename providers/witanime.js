@@ -1,6 +1,6 @@
 /**
  * witanime - Built from src/witanime/
- * Generated: 2026-03-22T10:45:35.352Z
+ * Generated: 2026-03-27T04:42:45.156Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -24,11 +24,13 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/witanime/http.js
-var SEED_URL = "https://witanime.com";
+var SEED_URL = "https://witanime.life";
 var FALLBACKS = [
-  "https://witanime.life",
+  "https://witanime.com",
   "https://witanime.day",
-  "https://witanime.xyz"
+  "https://witanime.xyz",
+  "https://witanime.one",
+  "https://witanime.plus"
 ];
 var cachedBase = "";
 var HEADERS = {
@@ -40,60 +42,58 @@ function getBaseUrl() {
   return __async(this, null, function* () {
     if (cachedBase)
       return cachedBase;
-    var url = SEED_URL;
-    for (var hop = 0; hop < 6; hop++) {
-      try {
-        var r = yield fetch(url + "/", {
-          method: "HEAD",
-          redirect: "manual",
-          headers: HEADERS
-        });
-        var loc = r.headers.get("location");
-        if ((r.status === 301 || r.status === 302) && loc) {
-          var m = loc.match(/^(https?:\/\/[^\/]+)/);
-          if (m) {
-            url = m[1];
-            continue;
-          }
-        }
-        break;
-      } catch (e) {
-        break;
-      }
-    }
-    if (url !== SEED_URL) {
-      cachedBase = url;
+    var resolved = yield probeUrl(SEED_URL);
+    if (resolved) {
+      cachedBase = resolved;
       console.log("[WitAnime] Domain: " + cachedBase);
       return cachedBase;
     }
     for (var i = 0; i < FALLBACKS.length; i++) {
-      try {
-        var r2 = yield fetch(FALLBACKS[i] + "/", {
-          method: "HEAD",
-          redirect: "manual",
-          headers: HEADERS
-        });
-        if (r2.status > 0) {
-          if (r2.status === 301 || r2.status === 302) {
-            var loc2 = r2.headers.get("location");
-            if (loc2) {
-              var m2 = loc2.match(/^(https?:\/\/[^\/]+)/);
-              if (m2) {
-                cachedBase = m2[1];
-                return cachedBase;
-              }
-            }
-          }
-          cachedBase = FALLBACKS[i];
-          console.log("[WitAnime] Domain (fallback): " + cachedBase);
-          return cachedBase;
-        }
-      } catch (e) {
-        continue;
+      resolved = yield probeUrl(FALLBACKS[i]);
+      if (resolved) {
+        cachedBase = resolved;
+        console.log("[WitAnime] Domain (fallback): " + cachedBase);
+        return cachedBase;
       }
     }
-    cachedBase = FALLBACKS[0];
+    cachedBase = SEED_URL;
+    console.log("[WitAnime] Domain (default): " + cachedBase);
     return cachedBase;
+  });
+}
+function probeUrl(url) {
+  return __async(this, null, function* () {
+    try {
+      var r = yield fetch(url + "/", {
+        method: "GET",
+        redirect: "manual",
+        headers: HEADERS
+      });
+      if ((r.status === 301 || r.status === 302 || r.status === 307 || r.status === 308) && r.headers.get("location")) {
+        var loc = r.headers.get("location");
+        var m = loc.match(/^(https?:\/\/[^\/]+)/);
+        if (m) {
+          var r2 = yield fetch(m[1] + "/", {
+            method: "GET",
+            redirect: "manual",
+            headers: HEADERS
+          });
+          if ((r2.status === 301 || r2.status === 302) && r2.headers.get("location")) {
+            var loc2 = r2.headers.get("location");
+            var m2 = loc2.match(/^(https?:\/\/[^\/]+)/);
+            if (m2)
+              return m2[1];
+          }
+          return m[1];
+        }
+      }
+      if (r.status > 0) {
+        return url;
+      }
+    } catch (e) {
+      console.log("[WitAnime] probe fail " + url + ": " + e.message);
+    }
+    return null;
   });
 }
 function fetchText(url, opts) {
@@ -201,7 +201,7 @@ function searchAnime(base, title) {
     if (!html)
       return [];
     var results = [];
-    var re = /href="(https?:\/\/[^"]+\/anime\/([a-z0-9][a-z0-9-]*[a-z0-9])\/)"/gi;
+    var re = /href="(https?:\/\/[^"]+\/anime\/([a-z0-9][a-z0-9-]*[a-z0-9])\/?)"/gi;
     var m;
     while ((m = re.exec(html)) !== null) {
       var slug = m[2];
@@ -214,6 +214,24 @@ function searchAnime(base, title) {
       }
       if (!dup)
         results.push({ url: m[1], slug });
+    }
+    if (results.length === 0) {
+      var fbRe = /href="(https?:\/\/[^"]+\/([a-z0-9][a-z0-9-]*[a-z0-9])\/?)"/gi;
+      while ((m = fbRe.exec(html)) !== null) {
+        var url = m[1];
+        var slug = m[2];
+        if (/^(anime|episode|category|tag|page|search|contact|about|genre|year|series-list|episodes-list)$/.test(slug))
+          continue;
+        var dup = false;
+        for (var i = 0; i < results.length; i++) {
+          if (results[i].slug === slug) {
+            dup = true;
+            break;
+          }
+        }
+        if (!dup)
+          results.push({ url, slug });
+      }
     }
     console.log("[WitAnime] Results: " + results.length);
     return results;
@@ -293,9 +311,18 @@ function extractEmbeds(html) {
   var urls = [];
   var seen = {};
   function add(u) {
-    if (u && u.indexOf("http") === 0 && !seen[u] && u.indexOf("witanime") < 0) {
-      urls.push(u);
-      seen[u] = true;
+    if (!u)
+      return;
+    var url = u;
+    if (url.indexOf("http") !== 0) {
+      try {
+        url = atob(url.padEnd(url.length + (4 - url.length % 4) % 4, "="));
+      } catch (e) {
+      }
+    }
+    if (url.indexOf("http") === 0 && !seen[url] && url.indexOf("witanime") < 0) {
+      urls.push(url);
+      seen[url] = true;
     }
   }
   var m;
@@ -304,7 +331,8 @@ function extractEmbeds(html) {
     /data-embed-url="([^"]+)"/gi,
     /data-ep-url="([^"]+)"/gi,
     /data-src="([^"]+)"/gi,
-    /data-link="([^"]+)"/gi
+    /data-link="([^"]+)"/gi,
+    /data-ep="([^"]+)"/gi
   ];
   for (var p = 0; p < attrPatterns.length; p++) {
     while ((m = attrPatterns[p].exec(html)) !== null)
@@ -313,20 +341,9 @@ function extractEmbeds(html) {
   var ire = /<iframe[^>]+src="([^"]+)"/gi;
   while ((m = ire.exec(html)) !== null)
     add(m[1]);
-  var epRe = /data-ep="([^"]+)"/gi;
-  while ((m = epRe.exec(html)) !== null) {
-    var val = m[1];
-    if (val.indexOf("http") === 0) {
-      add(val);
-      continue;
-    }
-    try {
-      var dec = atob(val);
-      if (dec.indexOf("http") === 0)
-        add(dec);
-    } catch (e) {
-    }
-  }
+  var jsRe = /"url"\s*:\s*"([^"]+)"/gi;
+  while ((m = jsRe.exec(html)) !== null)
+    add(m[1]);
   return urls;
 }
 function unpackPACK(html) {

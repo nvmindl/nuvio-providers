@@ -64,8 +64,9 @@ async function searchAnime(base, title) {
     if (!html) return [];
 
     var results = [];
-    // Match /anime/{slug}/ links (excludes /anime-type/, /anime-status/, etc.)
-    var re = /href="(https?:\/\/[^"]+\/anime\/([a-z0-9][a-z0-9-]*[a-z0-9])\/)"/gi;
+    // Match /anime/{slug}/ links or just domain path slugs depending on how the site returns them
+    // Example: <a href="https://witanime.life/anime/detective-conan/"
+    var re = /href="(https?:\/\/[^"]+\/anime\/([a-z0-9][a-z0-9-]*[a-z0-9])\/?)"/gi;
     var m;
     while ((m = re.exec(html)) !== null) {
         var slug = m[2];
@@ -74,6 +75,23 @@ async function searchAnime(base, title) {
             if (results[i].slug === slug) { dup = true; break; }
         }
         if (!dup) results.push({ url: m[1], slug: slug });
+    }
+
+    // Fallback if the site uses a different base structure with direct slugs
+    if (results.length === 0) {
+        var fbRe = /href="(https?:\/\/[^"]+\/([a-z0-9][a-z0-9-]*[a-z0-9])\/?)"/gi;
+        while ((m = fbRe.exec(html)) !== null) {
+            var url = m[1];
+            var slug = m[2];
+            // Skip common non-anime pages
+            if (/^(anime|episode|category|tag|page|search|contact|about|genre|year|series-list|episodes-list)$/.test(slug)) continue;
+            
+            var dup = false;
+            for (var i = 0; i < results.length; i++) {
+                if (results[i].slug === slug) { dup = true; break; }
+            }
+            if (!dup) results.push({ url: url, slug: slug });
+        }
     }
     console.log('[WitAnime] Results: ' + results.length);
     return results;
@@ -156,21 +174,32 @@ async function findAnime(base, meta, season) {
 function extractEmbeds(html) {
     var urls = [];
     var seen = {};
+    
     function add(u) {
-        if (u && u.indexOf('http') === 0 && !seen[u] && u.indexOf('witanime') < 0) {
-            urls.push(u);
-            seen[u] = true;
+        if (!u) return;
+        var url = u;
+        // If it doesn't start with http, it might be base64 encoded.
+        if (url.indexOf('http') !== 0) {
+            try { 
+                // Fix padding if necessary
+                url = atob(url.padEnd(url.length + (4 - url.length % 4) % 4, '=')); 
+            } catch(e) {}
+        }
+        if (url.indexOf('http') === 0 && !seen[url] && url.indexOf('witanime') < 0) {
+            urls.push(url);
+            seen[url] = true;
         }
     }
 
     var m;
-    // data-url, data-embed-url, data-ep-url, data-src, data-link attributes
+    // Common data attributes holding embed URLs (plain or base64)
     var attrPatterns = [
         /data-url="([^"]+)"/gi,
         /data-embed-url="([^"]+)"/gi,
         /data-ep-url="([^"]+)"/gi,
         /data-src="([^"]+)"/gi,
         /data-link="([^"]+)"/gi,
+        /data-ep="([^"]+)"/gi
     ];
     for (var p = 0; p < attrPatterns.length; p++) {
         while ((m = attrPatterns[p].exec(html)) !== null) add(m[1]);
@@ -180,16 +209,10 @@ function extractEmbeds(html) {
     var ire = /<iframe[^>]+src="([^"]+)"/gi;
     while ((m = ire.exec(html)) !== null) add(m[1]);
 
-    // data-ep="..." (may be base64)
-    var epRe = /data-ep="([^"]+)"/gi;
-    while ((m = epRe.exec(html)) !== null) {
-        var val = m[1];
-        if (val.indexOf('http') === 0) { add(val); continue; }
-        try {
-            var dec = atob(val);
-            if (dec.indexOf('http') === 0) add(dec);
-        } catch (e) {}
-    }
+    // Sometimes servers are stored in base64 within javascript arrays in the page
+    // var servers = [{"name":"Server","url":"base64"}...
+    var jsRe = /"url"\s*:\s*"([^"]+)"/gi;
+    while ((m = jsRe.exec(html)) !== null) add(m[1]);
 
     return urls;
 }
