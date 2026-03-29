@@ -1,6 +1,5 @@
-// WitAnime Nuvio Provider — thin API client
-// All scraping + CF bypass is handled by the witanime-backend on Render.com
-// This provider just calls the backend API and returns the streams.
+// WitAnime Nuvio Provider v3.0 — Dual Source (anime4up + WitAnime backend)
+// Backend: anime4up primary (free) with ScraperAPI fallback
 
 var BACKEND_URL = 'https://witanime-backend.onrender.com';
 
@@ -8,7 +7,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     try {
         console.log('[WitAnime] Request: ' + mediaType + ' ' + tmdbId);
 
-        // Build the ID string: "tmdbId" for movies, "tmdbId:season:episode" for TV
         var id = String(tmdbId);
         if (mediaType !== 'movie' && season && episode) {
             id = tmdbId + ':' + season + ':' + episode;
@@ -47,14 +45,14 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         var streams = data.streams || [];
         console.log('[WitAnime] Got ' + streams.length + ' stream(s) from backend');
 
-        // Ensure each stream has the expected shape for Nuvio
         var result = [];
         for (var i = 0; i < streams.length; i++) {
             var s = streams[i];
             result.push({
                 name: s.name || 'WitAnime',
                 title: s.title || 'Server',
-                url: s.url || '',
+                // Use proxyUrl if available (handles CORS/referer), fall back to raw url
+                url: s.proxyUrl || s.url || '',
                 quality: s.quality || 'auto',
                 headers: s.headers || {},
             });
@@ -67,4 +65,41 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     }
 }
 
-module.exports = { getStreams };
+async function searchAnime(query) {
+    try {
+        console.log('[WitAnime] Search: ' + query);
+
+        var url = BACKEND_URL + '/search?q=' + encodeURIComponent(query);
+
+        var response = await fetch(url, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(30000),
+        });
+
+        if (!response.ok) {
+            console.log('[WitAnime] Search returned status ' + response.status);
+            return [];
+        }
+
+        var data = await response.json();
+        var results = data.results || [];
+        console.log('[WitAnime] Search found ' + results.length + ' result(s)');
+
+        return results.map(function(r) {
+            return {
+                slug: r.slug,
+                title: r.title,
+                url: r.url,
+                thumbnail: r.thumbnail || '',
+                type: r.type || '',
+                status: r.status || '',
+            };
+        });
+    } catch (error) {
+        console.error('[WitAnime] Search error: ' + error.message);
+        return [];
+    }
+}
+
+module.exports = { getStreams, searchAnime };

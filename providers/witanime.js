@@ -1,6 +1,6 @@
 /**
  * witanime - Built from src/witanime/
- * Generated: 2026-03-27T15:53:36.034Z
+ * Generated: 2026-03-29T07:00:00.293Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -71,7 +71,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
         result.push({
           name: s.name || "WitAnime",
           title: s.title || "Server",
-          url: s.url || "",
+          // Use proxyUrl if available (handles CORS/referer), fall back to raw url
+          url: s.proxyUrl || s.url || "",
           quality: s.quality || "auto",
           headers: s.headers || {}
         });
@@ -83,4 +84,37 @@ function getStreams(tmdbId, mediaType, season, episode) {
     }
   });
 }
-module.exports = { getStreams };
+function searchAnime(query) {
+  return __async(this, null, function* () {
+    try {
+      console.log("[WitAnime] Search: " + query);
+      var url = BACKEND_URL + "/search?q=" + encodeURIComponent(query);
+      var response = yield fetch(url, {
+        method: "GET",
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(3e4)
+      });
+      if (!response.ok) {
+        console.log("[WitAnime] Search returned status " + response.status);
+        return [];
+      }
+      var data = yield response.json();
+      var results = data.results || [];
+      console.log("[WitAnime] Search found " + results.length + " result(s)");
+      return results.map(function(r) {
+        return {
+          slug: r.slug,
+          title: r.title,
+          url: r.url,
+          thumbnail: r.thumbnail || "",
+          type: r.type || "",
+          status: r.status || ""
+        };
+      });
+    } catch (error) {
+      console.error("[WitAnime] Search error: " + error.message);
+      return [];
+    }
+  });
+}
+module.exports = { getStreams, searchAnime };
