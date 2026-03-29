@@ -48,14 +48,33 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         var result = [];
         for (var i = 0; i < streams.length; i++) {
             var s = streams[i];
-            result.push({
-                name: s.name || 'WitAnime',
-                title: s.title || 'Server',
-                // Use proxyUrl if available (handles CORS/referer), fall back to raw url
-                url: s.proxyUrl || s.url || '',
-                quality: s.quality || 'auto',
-                headers: s.headers || {},
-            });
+            var rawUrl = s.url || '';
+            var proxyUrl = s.proxyUrl || '';
+            var streamHeaders = s.headers || {};
+
+            if (!rawUrl && !proxyUrl) continue; // skip streams with no URL at all
+
+            // Primary: raw URL with headers (direct .m3u8 or .mp4 — player can detect type)
+            if (rawUrl) {
+                result.push({
+                    name: s.name || 'WitAnime',
+                    title: s.title || 'Server',
+                    url: rawUrl,
+                    quality: s.quality || 'auto',
+                    headers: streamHeaders,
+                });
+            }
+
+            // Fallback: proxy URL (handles CORS/referer internally, no headers needed)
+            // Only add if we have a proxy URL and it differs from the raw URL
+            if (proxyUrl && proxyUrl !== rawUrl) {
+                result.push({
+                    name: s.name || 'WitAnime',
+                    title: (s.title || 'Server') + ' (Proxy)',
+                    url: proxyUrl,
+                    quality: s.quality || 'auto',
+                });
+            }
         }
 
         return result;
