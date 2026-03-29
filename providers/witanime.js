@@ -1,6 +1,6 @@
 /**
  * witanime - Built from src/witanime/
- * Generated: 2026-03-29T11:26:39.803Z
+ * Generated: 2026-03-29T12:07:11.621Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -70,24 +70,22 @@ function getStreams(tmdbId, mediaType, season, episode) {
         var s = streams[i];
         var rawUrl = s.url || "";
         var proxyUrl = s.proxyUrl || "";
-        var streamHeaders = s.headers || {};
         if (!rawUrl && !proxyUrl)
           continue;
-        if (rawUrl) {
+        if (s.ipLocked && proxyUrl) {
+          result.push({
+            name: s.name || "WitAnime",
+            title: s.title || "Server",
+            url: proxyUrl,
+            quality: s.quality || "auto"
+          });
+        } else if (rawUrl) {
           result.push({
             name: s.name || "WitAnime",
             title: s.title || "Server",
             url: rawUrl,
             quality: s.quality || "auto",
-            headers: streamHeaders
-          });
-        }
-        if (proxyUrl && proxyUrl !== rawUrl) {
-          result.push({
-            name: s.name || "WitAnime",
-            title: (s.title || "Server") + " (Proxy)",
-            url: proxyUrl,
-            quality: s.quality || "auto"
+            headers: s.headers || {}
           });
         }
       }
