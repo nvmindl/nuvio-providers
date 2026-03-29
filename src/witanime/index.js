@@ -1,6 +1,7 @@
-// WitAnime Nuvio Provider v4.0 — Client-side embed resolution
+// WitAnime Nuvio Provider v5.0 — Client-side embed resolution + server-proxied blocked hosts
 // Backend returns raw embed URLs via /embeds endpoint.
 // This provider resolves them on-device so IP-locked tokens match the user's IP.
+// For ISP-blocked hosts (mp4upload), backend pre-resolves and provides proxy URLs.
 
 var BACKEND_URL = 'https://witanime-backend.onrender.com';
 var UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
@@ -353,13 +354,21 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         if (embeds.length === 0) return [];
 
-        // Prioritize embeds: HLS-capable hosts first (no IP-lock), then mp4 hosts
+        // Prioritize embeds:
+        // 1. Server-resolved proxy embeds (guaranteed to work, no ISP blocks)
+        // 2. HLS-capable hosts (no IP-lock issues)
+        // 3. MP4 hosts (client-resolved)
         var hlsHosts = ['larhu', 'vidmoly', 'voe'];
-        var mp4Hosts = ['uqload', 'mp4upload', 'file-upload'];
+        var mp4Hosts = ['uqload', 'file-upload'];
 
         var sorted = [];
-        // HLS hosts first (FHD, no IP-lock issues with HLS)
+        // Pre-resolved proxy embeds first (highest priority — always work)
         for (var i = 0; i < embeds.length; i++) {
+            if (embeds[i].resolved && embeds[i].proxyUrl) sorted.push(embeds[i]);
+        }
+        // HLS hosts second (FHD, no IP-lock issues with HLS)
+        for (var i = 0; i < embeds.length; i++) {
+            if (embeds[i].resolved) continue; // already added
             var h = embeds[i].host || '';
             for (var j = 0; j < hlsHosts.length; j++) {
                 if (h.indexOf(hlsHosts[j]) > -1) { sorted.push(embeds[i]); break; }
@@ -367,6 +376,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         }
         // Then mp4 hosts
         for (var i = 0; i < embeds.length; i++) {
+            if (embeds[i].resolved) continue; // already added
             var h = embeds[i].host || '';
             var isHls = false;
             for (var j = 0; j < hlsHosts.length; j++) {
@@ -401,6 +411,20 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 // Resolve a single embed and wrap with stream metadata
 async function resolveWithMeta(embed) {
     try {
+        // If the backend already resolved this (blocked host), use the proxy URL directly
+        if (embed.resolved && embed.proxyUrl) {
+            var qualityLabel = embed.quality === 'FHD' ? '1080p' : embed.quality === 'SD' ? '480p' : '720p';
+            var serverName = (embed.name || getHostName(embed.host)) + ' (Proxy)';
+            console.log('[WitAnime] Using server-proxied stream: ' + embed.host + ' [' + qualityLabel + ']');
+            return {
+                name: 'Anime4up',
+                title: serverName + ' [' + qualityLabel + ']',
+                url: embed.proxyUrl,
+                quality: qualityLabel,
+                headers: {},
+            };
+        }
+
         var result = await resolveEmbed(embed);
         if (!result || !result.url) return null;
 

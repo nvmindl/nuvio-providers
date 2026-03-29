@@ -48,8 +48,8 @@
     {
       "id": "WitAnime",
       "name": "WitAnime",
-      "description": "Arabic dubbed and subtitled anime from anime4up (client-side resolution)",
-      "version": "4.0.0",
+      "description": "Arabic dubbed and subtitled anime from anime4up (hybrid resolution)",
+      "version": "5.0.0",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",

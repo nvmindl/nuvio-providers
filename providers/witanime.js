@@ -1,6 +1,6 @@
 /**
  * witanime - Built from src/witanime/
- * Generated: 2026-03-29T12:56:23.999Z
+ * Generated: 2026-03-29T17:37:25.070Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -371,9 +371,15 @@ function getStreams(tmdbId, mediaType, season, episode) {
       if (embeds.length === 0)
         return [];
       var hlsHosts = ["larhu", "vidmoly", "voe"];
-      var mp4Hosts = ["uqload", "mp4upload", "file-upload"];
+      var mp4Hosts = ["uqload", "file-upload"];
       var sorted = [];
       for (var i = 0; i < embeds.length; i++) {
+        if (embeds[i].resolved && embeds[i].proxyUrl)
+          sorted.push(embeds[i]);
+      }
+      for (var i = 0; i < embeds.length; i++) {
+        if (embeds[i].resolved)
+          continue;
         var h = embeds[i].host || "";
         for (var j = 0; j < hlsHosts.length; j++) {
           if (h.indexOf(hlsHosts[j]) > -1) {
@@ -383,6 +389,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       }
       for (var i = 0; i < embeds.length; i++) {
+        if (embeds[i].resolved)
+          continue;
         var h = embeds[i].host || "";
         var isHls = false;
         for (var j = 0; j < hlsHosts.length; j++) {
@@ -416,6 +424,18 @@ function getStreams(tmdbId, mediaType, season, episode) {
 function resolveWithMeta(embed) {
   return __async(this, null, function* () {
     try {
+      if (embed.resolved && embed.proxyUrl) {
+        var qualityLabel = embed.quality === "FHD" ? "1080p" : embed.quality === "SD" ? "480p" : "720p";
+        var serverName = (embed.name || getHostName(embed.host)) + " (Proxy)";
+        console.log("[WitAnime] Using server-proxied stream: " + embed.host + " [" + qualityLabel + "]");
+        return {
+          name: "Anime4up",
+          title: serverName + " [" + qualityLabel + "]",
+          url: embed.proxyUrl,
+          quality: qualityLabel,
+          headers: {}
+        };
+      }
       var result = yield resolveEmbed(embed);
       if (!result || !result.url)
         return null;
