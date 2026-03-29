@@ -66,15 +66,20 @@ async function searchAnime(base, title) {
     var results = [];
     // Match /anime/{slug}/ links or just domain path slugs depending on how the site returns them
     // Example: <a href="https://witanime.life/anime/detective-conan/"
-    var re = /href="(https?:\/\/[^"]+\/anime\/([a-z0-9][a-z0-9-]*[a-z0-9])\/?)"/gi;
+    var re = /href="([^"]*\/anime\/([a-z0-9][a-z0-9-]*[a-z0-9])\/?)"/gi;
     var m;
     while ((m = re.exec(html)) !== null) {
+        var url = m[1];
+        if (url.indexOf('http') !== 0) {
+            if (url.indexOf('/') === 0) url = base + url;
+            else url = base + '/' + url;
+        }
         var slug = m[2];
         var dup = false;
         for (var i = 0; i < results.length; i++) {
             if (results[i].slug === slug) { dup = true; break; }
         }
-        if (!dup) results.push({ url: m[1], slug: slug });
+        if (!dup) results.push({ url: url, slug: slug });
     }
 
     // Fallback if the site uses a different base structure with direct slugs
@@ -84,7 +89,7 @@ async function searchAnime(base, title) {
             var url = m[1];
             var slug = m[2];
             // Skip common non-anime pages
-            if (/^(anime|episode|category|tag|page|search|contact|about|genre|year|series-list|episodes-list)$/.test(slug)) continue;
+            if (/^(anime|episode|category|tag|page|search|contact|about|genre|year|series-list|episodes-list|feed|rss2|xml.*)$/.test(slug)) continue;
             
             var dup = false;
             for (var i = 0; i < results.length; i++) {
@@ -309,8 +314,9 @@ function getServerName(url) {
 
 // ── Main extraction ─────────────────────────────────────────────────────────
 
-// URL-encoded "الحلقة" (Arabic for "episode")
-var EP_SLUG = '%d8%a7%d9%84%d8%ad%d9%84%d9%82%d8%a9';
+// Raw "الحلقة" (Arabic for "episode")
+// We use raw UTF-8 instead of url-encoded so the proxy's encodeURIComponent doesn't double-encode it.
+var EP_SLUG = 'الحلقة';
 
 export async function extractStreams(tmdbId, mediaType, season, episode) {
     var base = await getBaseUrl();
