@@ -1,9 +1,9 @@
-// WitAnime Nuvio Provider v5.2 — Full server-side resolution (v7.5.0 backend)
+// WitAnime Nuvio Provider v5.3 — Full server-side resolution (v7.5.1 backend)
 // Backend resolves ALL embeds server-side before returning.
 // mp4upload → proxyUrl (ISP-blocked CDN streamed through backend)
 // All other hosts → url (final CDN M3U8/MP4), streamType, referer
 // Client-side resolvers kept as dead-code fallback for older backend responses.
-// v5.2: Consume resolved embed fields directly; no on-device fetch needed
+// v5.3: Match AnimeKai stream format exactly (quality labels, headers, subtitles, provider)
 
 var BACKEND_URL = 'https://witanime-backend.onrender.com';
 var UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
@@ -401,36 +401,47 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 // Resolve a single embed and wrap with stream metadata
 async function resolveWithMeta(embed) {
     try {
-        // Quality label: use anime4up's label as-is (FHD/HD/SD) — don't convert to
-        // resolution numbers since anime4up labels are often inaccurate
-        var qualityLabel = embed.quality || 'HD';
+        // Map anime4up quality labels to Nuvio standard labels
+        var rawQ = (embed.quality || 'HD').toUpperCase();
+        var qualityLabel = rawQ === 'FHD' ? '1080p' : rawQ === 'HD' ? '720p' : rawQ === 'SD' ? '480p' : 'Unknown';
         var hostName = embed.name || getHostName(embed.host);
 
-        // v7.5.0: backend proxied (mp4upload ISP-blocked CDN)
+        // Standard playback headers (matches AnimeKai format)
+        var playHeaders = {
+            'User-Agent': UA,
+            'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'identity',
+        };
+
+        // v7.5.1: backend proxied (mp4upload ISP-blocked CDN)
         if (embed.resolved && embed.proxyUrl) {
             console.log('[WitAnime] Using server-proxied stream: ' + embed.host + ' [' + qualityLabel + ']');
             return {
-                name: 'Anime4up',
-                title: hostName + ' (Proxy) [' + qualityLabel + ']',
+                name: 'ANIME4UP ' + hostName.toUpperCase() + ' - ' + qualityLabel,
+                title: hostName + ' (Proxy)',
                 url: embed.proxyUrl,
                 quality: qualityLabel,
-                type: embed.streamType || 'mp4',
-                headers: {},
+                size: 'Unknown',
+                headers: playHeaders,
+                subtitles: [],
+                provider: 'witanime',
             };
         }
 
-        // v7.5.0: backend already resolved to final CDN URL
+        // v7.5.1: backend already resolved to final CDN URL
         if (embed.resolved && embed.url) {
-            var headers = {};
-            if (embed.referer) headers['Referer'] = embed.referer;
+            if (embed.referer) playHeaders['Referer'] = embed.referer;
             console.log('[WitAnime] Using server-resolved stream: ' + embed.host + ' [' + qualityLabel + '] ' + embed.streamType);
             return {
-                name: 'Anime4up',
-                title: hostName + ' [' + qualityLabel + ']',
+                name: 'ANIME4UP ' + hostName.toUpperCase() + ' - ' + qualityLabel,
+                title: hostName,
                 url: embed.url,
                 quality: qualityLabel,
-                type: embed.streamType || 'm3u8',
-                headers: headers,
+                size: 'Unknown',
+                headers: playHeaders,
+                subtitles: [],
+                provider: 'witanime',
             };
         }
 
@@ -438,12 +449,18 @@ async function resolveWithMeta(embed) {
         var result = await resolveEmbed(embed);
         if (!result || !result.url) return null;
 
+        var hdrs = playHeaders;
+        if (result.headers && result.headers['Referer']) hdrs['Referer'] = result.headers['Referer'];
+
         return {
-            name: 'Anime4up',
-            title: hostName + ' [' + qualityLabel + ']',
+            name: 'ANIME4UP ' + hostName.toUpperCase() + ' - ' + qualityLabel,
+            title: hostName,
             url: result.url,
             quality: qualityLabel,
-            headers: result.headers || {},
+            size: 'Unknown',
+            headers: hdrs,
+            subtitles: [],
+            provider: 'witanime',
         };
     } catch (e) {
         console.log('[WitAnime] resolveWithMeta error: ' + e.message);
