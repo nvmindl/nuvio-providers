@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-03-30T19:38:14.362Z
+ * Generated: 2026-03-30T19:52:59.408Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -578,7 +578,54 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var targetEp;
       if (isTV) {
         targetEp = findEpisode(episodes, episode);
-        if (!targetEp) {
+        if (!targetEp && episode > episodes.length) {
+          console.log("[AnimeCloud] Episode " + episode + " not in " + matchedAnime.name + " (" + episodes.length + " eps), trying split-cour fallback");
+          var offsetEp = episode - episodes.length;
+          var matchedBase = normalize(extractBaseName(matchedAnime.name || ""));
+          var continuations = [];
+          for (var ci = 0; ci < animeList.length; ci++) {
+            var cEntry = animeList[ci];
+            if (cEntry.id === matchedAnime.id)
+              continue;
+            var cBase = normalize(extractBaseName(cEntry.name || ""));
+            if (cBase === matchedBase || titleScore(matchedBase, cBase) >= 70) {
+              var cYear = parseInt(cEntry.year) || 0;
+              var mYear = parseInt(matchedAnime.year) || 0;
+              if (cYear >= mYear && !isMovie(cEntry.name || "")) {
+                continuations.push(cEntry);
+              }
+            }
+          }
+          continuations.sort(function(a, b) {
+            var ya = parseInt(a.year) || 9999;
+            var yb = parseInt(b.year) || 9999;
+            if (ya !== yb)
+              return ya - yb;
+            return extractSeason(a.name || "") - extractSeason(b.name || "");
+          });
+          var remaining = offsetEp;
+          for (var ci = 0; ci < continuations.length; ci++) {
+            var contDetails = yield acPost("getAnimeDetails", { animeID: continuations[ci].id });
+            if (!contDetails || !contDetails.result)
+              continue;
+            var contEps = contDetails.result;
+            console.log("[AnimeCloud] Checking continuation: " + continuations[ci].name + " (" + contEps.length + " eps), need ep " + remaining);
+            targetEp = findEpisode(contEps, remaining);
+            if (targetEp) {
+              matchedAnime = continuations[ci];
+              episodes = contEps;
+              console.log("[AnimeCloud] Split-cour resolved: " + matchedAnime.name + " ep " + remaining);
+              break;
+            }
+            remaining -= contEps.length;
+            if (remaining <= 0)
+              break;
+          }
+          if (!targetEp) {
+            console.log("[AnimeCloud] Episode " + episode + " not found (split-cour search exhausted)");
+            return [];
+          }
+        } else if (!targetEp) {
           console.log("[AnimeCloud] Episode " + episode + " not found");
           return [];
         }

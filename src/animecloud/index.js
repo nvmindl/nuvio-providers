@@ -1,9 +1,10 @@
-// AnimeCloud Nuvio Provider v2.1.0
+// AnimeCloud Nuvio Provider v2.2.0
 // Direct API integration — no backend required.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
-// Matching v2.1: TMDB titles + season names + AniList romaji → AnimeCloud fuzzy match
+// Matching v2.2: TMDB titles + season names + AniList romaji → AnimeCloud fuzzy match
 //   - Franchise grouping, season name matching, length-guarded scoring
 //   - Franchise index fallback for titles with no season indicator (JJK S3 fix)
+//   - Split-cour fallback: when episode exceeds entry's count, walks continuation parts
 
 var CryptoJS = require('crypto-js');
 
@@ -650,11 +651,61 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         var episodes = details.result;
         console.log('[AnimeCloud] Episodes: ' + episodes.length);
 
-        // Step 6: Find target episode
+        // Step 6: Find target episode (with split-cour fallback)
+        // Some TMDB seasons are split into multiple AnimeCloud entries (e.g., Fire Force S3
+        // is "San no Shou" eps 1-12 + "San no Shou Part 2" eps 1-12, but TMDB has S3 eps 1-25).
+        // When the episode number exceeds the matched entry's count, find the next part.
         var targetEp;
         if (isTV) {
             targetEp = findEpisode(episodes, episode);
-            if (!targetEp) {
+            if (!targetEp && episode > episodes.length) {
+                console.log('[AnimeCloud] Episode ' + episode + ' not in ' + matchedAnime.name + ' (' + episodes.length + ' eps), trying split-cour fallback');
+                var offsetEp = episode - episodes.length;
+                // Find continuation parts: same base name, higher year or "Part 2/3" suffix
+                var matchedBase = normalize(extractBaseName(matchedAnime.name || ''));
+                var continuations = [];
+                for (var ci = 0; ci < animeList.length; ci++) {
+                    var cEntry = animeList[ci];
+                    if (cEntry.id === matchedAnime.id) continue;
+                    var cBase = normalize(extractBaseName(cEntry.name || ''));
+                    if (cBase === matchedBase || titleScore(matchedBase, cBase) >= 70) {
+                        var cYear = parseInt(cEntry.year) || 0;
+                        var mYear = parseInt(matchedAnime.year) || 0;
+                        if (cYear >= mYear && !isMovie(cEntry.name || '')) {
+                            continuations.push(cEntry);
+                        }
+                    }
+                }
+                // Sort by year then by season/part number
+                continuations.sort(function(a, b) {
+                    var ya = parseInt(a.year) || 9999;
+                    var yb = parseInt(b.year) || 9999;
+                    if (ya !== yb) return ya - yb;
+                    return extractSeason(a.name || '') - extractSeason(b.name || '');
+                });
+                // Walk through continuations, subtracting episode counts until we find the right part
+                var remaining = offsetEp;
+                for (var ci = 0; ci < continuations.length; ci++) {
+                    var contDetails = await acPost('getAnimeDetails', { animeID: continuations[ci].id });
+                    if (!contDetails || !contDetails.result) continue;
+                    var contEps = contDetails.result;
+                    console.log('[AnimeCloud] Checking continuation: ' + continuations[ci].name + ' (' + contEps.length + ' eps), need ep ' + remaining);
+                    targetEp = findEpisode(contEps, remaining);
+                    if (targetEp) {
+                        matchedAnime = continuations[ci];
+                        episodes = contEps;
+                        console.log('[AnimeCloud] Split-cour resolved: ' + matchedAnime.name + ' ep ' + remaining);
+                        break;
+                    }
+                    // If still not found, subtract this part's episode count and try next
+                    remaining -= contEps.length;
+                    if (remaining <= 0) break;
+                }
+                if (!targetEp) {
+                    console.log('[AnimeCloud] Episode ' + episode + ' not found (split-cour search exhausted)');
+                    return [];
+                }
+            } else if (!targetEp) {
                 console.log('[AnimeCloud] Episode ' + episode + ' not found');
                 return [];
             }
