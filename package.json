@@ -21,6 +21,7 @@
     ],
     "license": "GPL-3.0",
     "dependencies": {
+        "crypto-js": "^4.2.0",
         "puppeteer-core": "^24.38.0"
     }
 }
