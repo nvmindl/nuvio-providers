@@ -1,7 +1,8 @@
-// AnimeCloud Nuvio Provider v1.0.0
+// AnimeCloud Nuvio Provider v2.0.0
 // Direct API integration — no backend required.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
-// Matching: TMDB → AniList (romaji) → AnimeCloud fuzzy match (same as AnimeKai flow)
+// Matching v2: TMDB titles + season names + AniList romaji → AnimeCloud fuzzy match
+//   - Franchise grouping, season name matching, length-guarded scoring
 
 var CryptoJS = require('crypto-js');
 
@@ -119,8 +120,8 @@ async function tmdbGet(path) {
     }
 }
 
-// Get TMDB details — title, original title, year
-async function getTmdbDetails(tmdbId, mediaType) {
+// Get TMDB details — title, original title, year, season name
+async function getTmdbDetails(tmdbId, mediaType, season) {
     var type = mediaType === 'movie' ? 'movie' : 'tv';
     var data = await tmdbGet('/' + type + '/' + tmdbId + '?language=en-US&append_to_response=alternative_titles');
     if (!data) return null;
@@ -152,11 +153,23 @@ async function getTmdbDetails(tmdbId, mediaType) {
     var dateStr = data.first_air_date || data.release_date;
     if (dateStr) year = parseInt(dateStr.split('-')[0], 10);
 
+    // Get season name for multi-season shows (e.g., "Diamond Is Unbreakable" for JoJo S3)
+    var seasonName = null;
+    if (data.seasons && season) {
+        for (var i = 0; i < data.seasons.length; i++) {
+            if (data.seasons[i].season_number === season) {
+                seasonName = data.seasons[i].name;
+                break;
+            }
+        }
+    }
+
     return {
         title: data.name || data.title || '',
         originalTitle: data.original_name || data.original_title || '',
         titles: unique,
         year: year,
+        seasonName: seasonName,
     };
 }
 
@@ -249,7 +262,7 @@ async function getAnimeList() {
     return animeListCache;
 }
 
-// ── Title matching ─────────────────────────────────────────────────────
+// ── Title matching (v2) ────────────────────────────────────────────────
 
 function normalize(str) {
     return str.toLowerCase()
@@ -258,92 +271,213 @@ function normalize(str) {
         .trim();
 }
 
-// Remove season suffixes from AnimeCloud title
-function stripSeasonSuffix(name) {
+// Extract base franchise name from AnimeCloud title
+// "JoJo no Kimyou na Bouken Part 4: Diamond wa Kudakenai" → "JoJo no Kimyou na Bouken"
+// "Jujutsu Kaisen 2nd Season" → "Jujutsu Kaisen"
+// "Enen no Shouboutai: Ni no Shou" → "Enen no Shouboutai"
+function extractBaseName(name) {
     return name
-        .replace(/\s*(1st|2nd|3rd|\d+th)\s+season\s*$/i, '')
-        .replace(/\s*season\s*\d+\s*$/i, '')
-        .replace(/\s*s\d+\s*$/i, '')
-        .replace(/\s*\(\d{4}\)\s*$/i, '')
+        .replace(/\s+Part\s+\d+\s*[:].*/i, '')
+        .replace(/\s+Part\s+\d+\s*$/i, '')
+        .replace(/\s*(1st|2nd|3rd|\d+th)\s+Season\s*$/i, '')
+        .replace(/\s*Season\s*\d+\s*$/i, '')
+        .replace(/\s*[:]\s+.*$/, '')
+        .replace(/\s*\((?:TV|OVA|ONA|\d{4})\)\s*$/i, '')
+        .replace(/\s+(?:Movie|Film)\s*\d*\s*$/i, '')
+        .replace(/\s+\d+\s+Movie\s*$/i, '')
         .trim();
 }
 
-// Extract season number from AnimeCloud title
+// Extract season/part number from AnimeCloud title
 function extractSeason(name) {
     var m;
-    m = name.match(/(\d+)(?:st|nd|rd|th)\s+season/i);
+    m = name.match(/Part\s+(\d+)/i);
     if (m) return parseInt(m[1], 10);
-    m = name.match(/season\s*(\d+)/i);
+    m = name.match(/(\d+)(?:st|nd|rd|th)\s+Season/i);
     if (m) return parseInt(m[1], 10);
-    m = name.match(/\s+s(\d+)\s*$/i);
+    m = name.match(/Season\s*(\d+)/i);
     if (m) return parseInt(m[1], 10);
-    m = name.match(/part\s*(?:2|ii)\s*$/i);
-    if (m) return 2;
-    m = name.match(/part\s*(?:3|iii)\s*$/i);
-    if (m) return 3;
+    if (/[:]\s*Ni\s+no\s+Shou/i.test(name)) return 2;
+    if (/[:]\s*San\s+no\s+Shou/i.test(name)) return 3;
     return 1;
 }
 
 // Score how well two titles match (higher = better)
-function titleScore(tmdbTitle, acTitle) {
-    var a = normalize(tmdbTitle);
+function titleScore(searchTitle, acTitle) {
+    var a = normalize(searchTitle);
     var b = normalize(acTitle);
+
     if (a === b) return 100;
 
-    // Check if one contains the other
-    if (b.length > 2 && a.indexOf(b) > -1) return 85;
-    if (a.length > 2 && b.indexOf(a) > -1) return 80;
+    // Containment check WITH length ratio guard (prevents "blood" matching "...phantom blood")
+    var lenRatio = Math.min(a.length, b.length) / Math.max(a.length, b.length);
+    if (lenRatio > 0.5) {
+        if (b.length > 2 && a.indexOf(b) > -1) return 85;
+        if (a.length > 2 && b.indexOf(a) > -1) return 82;
+    }
 
-    // Word overlap scoring
-    var wordsA = a.split(' ');
-    var wordsB = b.split(' ');
+    // Word overlap — Jaccard-like scoring (penalizes extra words on either side)
+    var wordsA = a.split(' ').filter(function(w) { return w.length > 1; });
+    var wordsB = b.split(' ').filter(function(w) { return w.length > 1; });
+
+    if (wordsA.length === 0 || wordsB.length === 0) return 0;
+
     var matched = 0;
+    var usedB = {};
     for (var i = 0; i < wordsA.length; i++) {
         for (var j = 0; j < wordsB.length; j++) {
-            if (wordsA[i] === wordsB[j] && wordsA[i].length > 1) matched++;
+            if (!usedB[j] && wordsA[i] === wordsB[j]) {
+                matched++;
+                usedB[j] = true;
+                break;
+            }
         }
     }
-    var maxLen = Math.max(wordsA.length, wordsB.length);
-    if (maxLen === 0) return 0;
-    return Math.round((matched / maxLen) * 70);
+
+    var overlapA = matched / wordsA.length;
+    var overlapB = matched / wordsB.length;
+    var score = Math.round(Math.min(overlapA, overlapB) * 70);
+    if (overlapA > 0.8 && overlapB > 0.8) score += 10;
+
+    return score;
 }
 
-// Find best matching anime in AnimeCloud for given titles and target season
+// Find best matching anime using base title + season number
 function findBestMatch(animeList, searchTitles, targetSeason) {
-    var bestScore = 0;
-    var bestMatch = null;
+    var candidates = [];
 
     for (var i = 0; i < animeList.length; i++) {
         var anime = animeList[i];
         var acName = anime.name || '';
-        var acBaseName = stripSeasonSuffix(acName);
+        var acBase = extractBaseName(acName);
         var acSeason = extractSeason(acName);
 
+        var bestTitleScore = 0;
         for (var j = 0; j < searchTitles.length; j++) {
-            var score = titleScore(searchTitles[j], acBaseName);
-            // Also try matching against full name (for titles that include season)
+            var baseScore = titleScore(searchTitles[j], acBase);
             var fullScore = titleScore(searchTitles[j], acName);
-            score = Math.max(score, fullScore);
+            var score = Math.max(baseScore, fullScore);
+            if (score > bestTitleScore) bestTitleScore = score;
+        }
 
-            // Season matching: bonus for correct season, heavy penalty for wrong
-            if (acSeason === targetSeason) {
-                score += 15;
-            } else if (targetSeason > 1 && acSeason !== targetSeason) {
-                score -= 30;
-            }
+        if (bestTitleScore >= 40) {
+            candidates.push({
+                anime: anime,
+                tScore: bestTitleScore,
+                season: acSeason,
+                name: acName,
+            });
+        }
+    }
 
-            if (score > bestScore) {
-                bestScore = score;
-                bestMatch = anime;
-            }
+    if (candidates.length === 0) return null;
+
+    var bestScore = 0;
+    var bestMatch = null;
+
+    for (var i = 0; i < candidates.length; i++) {
+        var c = candidates[i];
+        var finalScore = c.tScore;
+        if (c.season === targetSeason) {
+            finalScore += 15;
+        } else if (targetSeason > 1 && c.season !== targetSeason) {
+            finalScore -= 20;
+        }
+        if (finalScore > bestScore) {
+            bestScore = finalScore;
+            bestMatch = c;
         }
     }
 
     console.log('[AnimeCloud] Best match: ' + (bestMatch ? bestMatch.name : 'none') + ' (score: ' + bestScore + ')');
-
-    // Require minimum score of 40 to avoid false matches
     if (bestScore < 40) return null;
-    return bestMatch;
+    return bestMatch ? bestMatch.anime : null;
+}
+
+// Season-name based matching for multi-part anime (e.g., JoJo, Demon Slayer arcs)
+// Uses TMDB season name to find the correct entry within a franchise
+function findBySeasonName(animeList, searchTitles, targetSeason, seasonName) {
+    if (!seasonName) return null;
+    // Skip generic "Season N" names — they don't help distinguish entries
+    if (/^Season\s+\d+$/i.test(seasonName.trim())) return null;
+
+    // Find all franchise entries (AC entries whose base name matches any search title)
+    var franchise = [];
+    for (var i = 0; i < animeList.length; i++) {
+        var anime = animeList[i];
+        var acBase = extractBaseName(anime.name || '');
+        for (var j = 0; j < searchTitles.length; j++) {
+            if (titleScore(searchTitles[j], acBase) >= 50) {
+                franchise.push(anime);
+                break;
+            }
+        }
+    }
+    if (franchise.length === 0) return null;
+
+    // Strategy 1: Match season name words directly against AC entry full names
+    var normSeason = normalize(seasonName);
+    var bestScore = 0;
+    var bestMatch = null;
+
+    for (var i = 0; i < franchise.length; i++) {
+        var fullNorm = normalize(franchise[i].name);
+        var seasonWords = normSeason.split(' ').filter(function(w) { return w.length > 2; });
+        var matched = 0;
+        for (var w = 0; w < seasonWords.length; w++) {
+            if (fullNorm.indexOf(seasonWords[w]) > -1) matched++;
+        }
+        var score = seasonWords.length > 0 ? matched / seasonWords.length : 0;
+        if (score > bestScore) {
+            bestScore = score;
+            bestMatch = franchise[i];
+        }
+    }
+    if (bestScore >= 0.5 && bestMatch) {
+        console.log('[AnimeCloud] Season name match: ' + bestMatch.name);
+        return bestMatch;
+    }
+
+    // Strategy 2: Find TMDB alt titles containing the season name, match against AC
+    var seasonSpecificTitles = [];
+    for (var i = 0; i < searchTitles.length; i++) {
+        var normTitle = normalize(searchTitles[i]);
+        if (normTitle.indexOf(normSeason) > -1 && normTitle !== normSeason) {
+            seasonSpecificTitles.push(searchTitles[i]);
+        }
+    }
+    if (seasonSpecificTitles.length > 0) {
+        var best2 = 0;
+        var bestMatch2 = null;
+        for (var i = 0; i < franchise.length; i++) {
+            for (var j = 0; j < seasonSpecificTitles.length; j++) {
+                var s = titleScore(seasonSpecificTitles[j], franchise[i].name);
+                if (s > best2) { best2 = s; bestMatch2 = franchise[i]; }
+            }
+        }
+        if (best2 >= 40 && bestMatch2) {
+            console.log('[AnimeCloud] Season-specific title match: ' + bestMatch2.name);
+            return bestMatch2;
+        }
+    }
+
+    // Strategy 3: Use season number as franchise index (sorted by year)
+    // Handles JoJo S4="Golden Wind" → 4th franchise entry = Part 5: Ougon no Kaze
+    if (franchise.length > 1) {
+        var sorted = franchise.slice().sort(function(a, b) {
+            var ya = parseInt(a.year) || 9999;
+            var yb = parseInt(b.year) || 9999;
+            if (ya !== yb) return ya - yb;
+            return extractSeason(a.name) - extractSeason(b.name);
+        });
+        var idx = targetSeason - 1;
+        if (idx >= 0 && idx < sorted.length) {
+            console.log('[AnimeCloud] Franchise index match: S' + targetSeason + ' -> ' + sorted[idx].name);
+            return sorted[idx];
+        }
+    }
+
+    return null;
 }
 
 // ── Episode mapping ────────────────────────────────────────────────────
@@ -413,12 +547,12 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         console.log('[AnimeCloud] Request: ' + mediaType + ' ' + tmdbId + (isTV ? ' S' + season + 'E' + episode : ''));
 
         // Step 1: Get TMDB details
-        var tmdb = await getTmdbDetails(tmdbId, mediaType);
+        var tmdb = await getTmdbDetails(tmdbId, mediaType, isTV ? season : null);
         if (!tmdb || !tmdb.titles || tmdb.titles.length === 0) {
             console.log('[AnimeCloud] No TMDB data found');
             return [];
         }
-        console.log('[AnimeCloud] TMDB: ' + tmdb.title + ' (' + tmdb.year + ')');
+        console.log('[AnimeCloud] TMDB: ' + tmdb.title + ' (' + tmdb.year + ')' + (tmdb.seasonName ? ' [' + tmdb.seasonName + ']' : ''));
 
         // Step 2: Get AniList romaji title (primary matching source, same as AnimeKai)
         var searchTitles = tmdb.titles.slice(); // start with TMDB titles as fallback
@@ -453,9 +587,20 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         }
         console.log('[AnimeCloud] Anime catalog: ' + animeList.length + ' entries');
 
-        // Step 4: Find matching anime (season-aware)
+        // Step 4: Find matching anime (season-aware, two-phase)
         var targetSeason = isTV ? (season || 1) : 1;
-        var matchedAnime = findBestMatch(animeList, uniqueTitles, targetSeason);
+
+        // Phase A: Try season-name matching first (handles multi-part anime like JoJo)
+        var matchedAnime = null;
+        if (isTV && tmdb.seasonName) {
+            matchedAnime = findBySeasonName(animeList, uniqueTitles, targetSeason, tmdb.seasonName);
+        }
+
+        // Phase B: Fall back to standard title + season number matching
+        if (!matchedAnime) {
+            matchedAnime = findBestMatch(animeList, uniqueTitles, targetSeason);
+        }
+
         if (!matchedAnime) {
             console.log('[AnimeCloud] No match found');
             return [];
