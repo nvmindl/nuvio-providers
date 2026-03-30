@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-03-30T19:25:45.157Z
+ * Generated: 2026-03-30T19:38:14.362Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -310,6 +310,9 @@ function titleScore(searchTitle, acTitle) {
     score += 10;
   return score;
 }
+function isMovie(name) {
+  return /\bMovie\b/i.test(name) || /\bFilm\b/i.test(name) || /\b0\s+Movie\b/i.test(name);
+}
 function findBestMatch(animeList, searchTitles, targetSeason) {
   var candidates = [];
   for (var i = 0; i < animeList.length; i++) {
@@ -338,17 +341,41 @@ function findBestMatch(animeList, searchTitles, targetSeason) {
     return null;
   var bestScore = 0;
   var bestMatch = null;
+  var hasExactSeason = false;
   for (var i = 0; i < candidates.length; i++) {
     var c = candidates[i];
     var finalScore = c.tScore;
     if (c.season === targetSeason) {
       finalScore += 15;
+      hasExactSeason = true;
     } else if (targetSeason > 1 && c.season !== targetSeason) {
       finalScore -= 20;
     }
     if (finalScore > bestScore) {
       bestScore = finalScore;
       bestMatch = c;
+    }
+  }
+  if (!hasExactSeason && targetSeason > 1 && candidates.length > 1) {
+    var tvCandidates = [];
+    for (var i = 0; i < candidates.length; i++) {
+      if (!isMovie(candidates[i].name)) {
+        tvCandidates.push(candidates[i]);
+      }
+    }
+    if (tvCandidates.length > 1) {
+      tvCandidates.sort(function(a, b) {
+        var ya = parseInt(a.anime.year) || 9999;
+        var yb = parseInt(b.anime.year) || 9999;
+        if (ya !== yb)
+          return ya - yb;
+        return a.season - b.season;
+      });
+      var idx = targetSeason - 1;
+      if (idx >= 0 && idx < tvCandidates.length) {
+        console.log("[AnimeCloud] Franchise index fallback: S" + targetSeason + " -> " + tvCandidates[idx].name);
+        return tvCandidates[idx].anime;
+      }
     }
   }
   console.log("[AnimeCloud] Best match: " + (bestMatch ? bestMatch.name : "none") + " (score: " + bestScore + ")");

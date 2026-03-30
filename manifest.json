@@ -1,6 +1,6 @@
 {
   "name": "Nuvio Providers",
-  "version": "8.2.0",
+  "version": "8.3.0",
   "scrapers": [
     {
       "id": "FaselHD",
@@ -72,7 +72,7 @@
       "id": "AnimeCloud",
       "name": "AnimeCloud",
       "description": "Arabic dubbed and subtitled anime — direct MP4 streams from AnimeCloud API",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",

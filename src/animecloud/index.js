@@ -1,8 +1,9 @@
-// AnimeCloud Nuvio Provider v2.0.0
+// AnimeCloud Nuvio Provider v2.1.0
 // Direct API integration — no backend required.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
-// Matching v2: TMDB titles + season names + AniList romaji → AnimeCloud fuzzy match
+// Matching v2.1: TMDB titles + season names + AniList romaji → AnimeCloud fuzzy match
 //   - Franchise grouping, season name matching, length-guarded scoring
+//   - Franchise index fallback for titles with no season indicator (JJK S3 fix)
 
 var CryptoJS = require('crypto-js');
 
@@ -342,6 +343,11 @@ function titleScore(searchTitle, acTitle) {
     return score;
 }
 
+// Check if an AnimeCloud title looks like a movie
+function isMovie(name) {
+    return /\bMovie\b/i.test(name) || /\bFilm\b/i.test(name) || /\b0\s+Movie\b/i.test(name);
+}
+
 // Find best matching anime using base title + season number
 function findBestMatch(animeList, searchTitles, targetSeason) {
     var candidates = [];
@@ -374,18 +380,45 @@ function findBestMatch(animeList, searchTitles, targetSeason) {
 
     var bestScore = 0;
     var bestMatch = null;
+    var hasExactSeason = false;
 
     for (var i = 0; i < candidates.length; i++) {
         var c = candidates[i];
         var finalScore = c.tScore;
         if (c.season === targetSeason) {
             finalScore += 15;
+            hasExactSeason = true;
         } else if (targetSeason > 1 && c.season !== targetSeason) {
             finalScore -= 20;
         }
         if (finalScore > bestScore) {
             bestScore = finalScore;
             bestMatch = c;
+        }
+    }
+
+    // Franchise index fallback: if no candidate had the exact target season,
+    // sort non-movie franchise entries by year and use targetSeason as index.
+    // Handles cases like JJK S3 where "Shimetsu Kaiyuu" has no season indicator in name.
+    if (!hasExactSeason && targetSeason > 1 && candidates.length > 1) {
+        var tvCandidates = [];
+        for (var i = 0; i < candidates.length; i++) {
+            if (!isMovie(candidates[i].name)) {
+                tvCandidates.push(candidates[i]);
+            }
+        }
+        if (tvCandidates.length > 1) {
+            tvCandidates.sort(function(a, b) {
+                var ya = parseInt(a.anime.year) || 9999;
+                var yb = parseInt(b.anime.year) || 9999;
+                if (ya !== yb) return ya - yb;
+                return a.season - b.season;
+            });
+            var idx = targetSeason - 1;
+            if (idx >= 0 && idx < tvCandidates.length) {
+                console.log('[AnimeCloud] Franchise index fallback: S' + targetSeason + ' -> ' + tvCandidates[idx].name);
+                return tvCandidates[idx].anime;
+            }
         }
     }
 
