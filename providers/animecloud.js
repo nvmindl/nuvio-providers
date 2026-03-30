@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-03-30T17:26:35.369Z
+ * Generated: 2026-03-30T18:02:35.061Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -334,9 +334,9 @@ function getVideoURLs(epID) {
     var urls = [];
     var results = yield Promise.all([fetchVideoURL(epID, 1), fetchVideoURL(epID, 2)]);
     if (results[0])
-      urls.push({ url: results[0].url, quality: "720p", note: results[0].note, label: "HD" });
+      urls.push({ url: results[0].url, quality: "auto", note: results[0].note, label: "High" });
     if (results[1])
-      urls.push({ url: results[1].url, quality: "480p", note: results[1].note, label: "SD" });
+      urls.push({ url: results[1].url, quality: "auto", note: results[1].note, label: "Low" });
     return urls;
   });
 }
@@ -446,7 +446,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       for (var i = 0; i < videoURLs.length; i++) {
         var v = videoURLs[i];
         streams.push({
-          name: "ANIMECLOUD " + v.label + " - " + v.quality,
+          name: "ANIMECLOUD - " + v.label,
           title: "AnimeCloud " + v.label,
           url: v.url,
           quality: v.quality,

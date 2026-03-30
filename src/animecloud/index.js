@@ -370,8 +370,8 @@ async function getVideoURLs(epID) {
 
     // Fetch HD (quality=1) and SD (quality=2) in parallel
     var results = await Promise.all([fetchVideoURL(epID, 1), fetchVideoURL(epID, 2)]);
-    if (results[0]) urls.push({ url: results[0].url, quality: '720p', note: results[0].note, label: 'HD' });
-    if (results[1]) urls.push({ url: results[1].url, quality: '480p', note: results[1].note, label: 'SD' });
+    if (results[0]) urls.push({ url: results[0].url, quality: 'auto', note: results[0].note, label: 'High' });
+    if (results[1]) urls.push({ url: results[1].url, quality: 'auto', note: results[1].note, label: 'Low' });
 
     return urls;
 }
@@ -505,7 +505,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         for (var i = 0; i < videoURLs.length; i++) {
             var v = videoURLs[i];
             streams.push({
-                name: 'ANIMECLOUD ' + v.label + ' - ' + v.quality,
+                name: 'ANIMECLOUD - ' + v.label,
                 title: 'AnimeCloud ' + v.label,
                 url: v.url,
                 quality: v.quality,
