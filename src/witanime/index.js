@@ -1,7 +1,8 @@
-// WitAnime Nuvio Provider v5.0 — Client-side embed resolution + server-proxied blocked hosts
+// WitAnime Nuvio Provider v5.1 — Client-side embed resolution + server-proxied blocked hosts
 // Backend returns raw embed URLs via /embeds endpoint.
 // This provider resolves them on-device so IP-locked tokens match the user's IP.
 // For ISP-blocked hosts (mp4upload), backend pre-resolves and provides proxy URLs.
+// v5.1: Honest quality labels (FHD/HD/SD as-is, no fake resolution mapping)
 
 var BACKEND_URL = 'https://witanime-backend.onrender.com';
 var UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
@@ -411,9 +412,12 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 // Resolve a single embed and wrap with stream metadata
 async function resolveWithMeta(embed) {
     try {
+        // Quality label: use anime4up's label as-is (FHD/HD/SD) — don't convert to
+        // resolution numbers since anime4up labels are often inaccurate
+        var qualityLabel = embed.quality || 'HD';
+
         // If the backend already resolved this (blocked host), use the proxy URL directly
         if (embed.resolved && embed.proxyUrl) {
-            var qualityLabel = embed.quality === 'FHD' ? '1080p' : embed.quality === 'SD' ? '480p' : '720p';
             var serverName = (embed.name || getHostName(embed.host)) + ' (Proxy)';
             console.log('[WitAnime] Using server-proxied stream: ' + embed.host + ' [' + qualityLabel + ']');
             return {
@@ -428,7 +432,6 @@ async function resolveWithMeta(embed) {
         var result = await resolveEmbed(embed);
         if (!result || !result.url) return null;
 
-        var qualityLabel = embed.quality === 'FHD' ? '1080p' : embed.quality === 'SD' ? '480p' : '720p';
         var serverName = embed.name || getHostName(embed.host);
 
         return {

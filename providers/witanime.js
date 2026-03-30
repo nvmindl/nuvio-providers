@@ -1,6 +1,6 @@
 /**
  * witanime - Built from src/witanime/
- * Generated: 2026-03-29T17:37:25.070Z
+ * Generated: 2026-03-30T09:18:21.804Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -424,8 +424,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
 function resolveWithMeta(embed) {
   return __async(this, null, function* () {
     try {
+      var qualityLabel = embed.quality || "HD";
       if (embed.resolved && embed.proxyUrl) {
-        var qualityLabel = embed.quality === "FHD" ? "1080p" : embed.quality === "SD" ? "480p" : "720p";
         var serverName = (embed.name || getHostName(embed.host)) + " (Proxy)";
         console.log("[WitAnime] Using server-proxied stream: " + embed.host + " [" + qualityLabel + "]");
         return {
@@ -439,7 +439,6 @@ function resolveWithMeta(embed) {
       var result = yield resolveEmbed(embed);
       if (!result || !result.url)
         return null;
-      var qualityLabel = embed.quality === "FHD" ? "1080p" : embed.quality === "SD" ? "480p" : "720p";
       var serverName = embed.name || getHostName(embed.host);
       return {
         name: "Anime4up",
