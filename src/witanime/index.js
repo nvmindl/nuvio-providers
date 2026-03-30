@@ -1,8 +1,9 @@
-// WitAnime Nuvio Provider v5.1 — Client-side embed resolution + server-proxied blocked hosts
-// Backend returns raw embed URLs via /embeds endpoint.
-// This provider resolves them on-device so IP-locked tokens match the user's IP.
-// For ISP-blocked hosts (mp4upload), backend pre-resolves and provides proxy URLs.
-// v5.1: Honest quality labels (FHD/HD/SD as-is, no fake resolution mapping)
+// WitAnime Nuvio Provider v5.2 — Full server-side resolution (v7.5.0 backend)
+// Backend resolves ALL embeds server-side before returning.
+// mp4upload → proxyUrl (ISP-blocked CDN streamed through backend)
+// All other hosts → url (final CDN M3U8/MP4), streamType, referer
+// Client-side resolvers kept as dead-code fallback for older backend responses.
+// v5.2: Consume resolved embed fields directly; no on-device fetch needed
 
 var BACKEND_URL = 'https://witanime-backend.onrender.com';
 var UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
@@ -355,35 +356,23 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         if (embeds.length === 0) return [];
 
-        // Prioritize embeds:
-        // 1. Server-resolved proxy embeds (guaranteed to work, no ISP blocks)
-        // 2. HLS-capable hosts (no IP-lock issues)
-        // 3. MP4 hosts (client-resolved)
-        var hlsHosts = ['larhu', 'vidmoly', 'voe'];
-        var mp4Hosts = ['uqload', 'file-upload'];
-
+        // v7.5.0: all embeds are pre-resolved by the backend.
+        // Priority: proxy (mp4upload, guaranteed playable) → HLS (m3u8) → MP4
         var sorted = [];
-        // Pre-resolved proxy embeds first (highest priority — always work)
+        // 1. Proxy embeds first
         for (var i = 0; i < embeds.length; i++) {
-            if (embeds[i].resolved && embeds[i].proxyUrl) sorted.push(embeds[i]);
+            if (embeds[i].proxyUrl) sorted.push(embeds[i]);
         }
-        // HLS hosts second (FHD, no IP-lock issues with HLS)
+        // 2. HLS embeds
         for (var i = 0; i < embeds.length; i++) {
-            if (embeds[i].resolved) continue; // already added
-            var h = embeds[i].host || '';
-            for (var j = 0; j < hlsHosts.length; j++) {
-                if (h.indexOf(hlsHosts[j]) > -1) { sorted.push(embeds[i]); break; }
-            }
+            if (embeds[i].proxyUrl) continue;
+            if ((embeds[i].streamType || '').indexOf('m3u8') > -1 || (embeds[i].streamType || '') === 'hls') sorted.push(embeds[i]);
         }
-        // Then mp4 hosts
+        // 3. Everything else
         for (var i = 0; i < embeds.length; i++) {
-            if (embeds[i].resolved) continue; // already added
-            var h = embeds[i].host || '';
-            var isHls = false;
-            for (var j = 0; j < hlsHosts.length; j++) {
-                if (h.indexOf(hlsHosts[j]) > -1) { isHls = true; break; }
-            }
-            if (!isHls) sorted.push(embeds[i]);
+            if (embeds[i].proxyUrl) continue;
+            if ((embeds[i].streamType || '').indexOf('m3u8') > -1 || (embeds[i].streamType || '') === 'hls') continue;
+            sorted.push(embeds[i]);
         }
 
         // Resolve embeds on-device (max 6 to keep it fast)
@@ -415,28 +404,43 @@ async function resolveWithMeta(embed) {
         // Quality label: use anime4up's label as-is (FHD/HD/SD) — don't convert to
         // resolution numbers since anime4up labels are often inaccurate
         var qualityLabel = embed.quality || 'HD';
+        var hostName = embed.name || getHostName(embed.host);
 
-        // If the backend already resolved this (blocked host), use the proxy URL directly
+        // v7.5.0: backend proxied (mp4upload ISP-blocked CDN)
         if (embed.resolved && embed.proxyUrl) {
-            var serverName = (embed.name || getHostName(embed.host)) + ' (Proxy)';
             console.log('[WitAnime] Using server-proxied stream: ' + embed.host + ' [' + qualityLabel + ']');
             return {
                 name: 'Anime4up',
-                title: serverName + ' [' + qualityLabel + ']',
+                title: hostName + ' (Proxy) [' + qualityLabel + ']',
                 url: embed.proxyUrl,
                 quality: qualityLabel,
+                type: embed.streamType || 'mp4',
                 headers: {},
             };
         }
 
+        // v7.5.0: backend already resolved to final CDN URL
+        if (embed.resolved && embed.url) {
+            var headers = {};
+            if (embed.referer) headers['Referer'] = embed.referer;
+            console.log('[WitAnime] Using server-resolved stream: ' + embed.host + ' [' + qualityLabel + '] ' + embed.streamType);
+            return {
+                name: 'Anime4up',
+                title: hostName + ' [' + qualityLabel + ']',
+                url: embed.url,
+                quality: qualityLabel,
+                type: embed.streamType || 'm3u8',
+                headers: headers,
+            };
+        }
+
+        // Fallback: older backend — resolve on-device
         var result = await resolveEmbed(embed);
         if (!result || !result.url) return null;
 
-        var serverName = embed.name || getHostName(embed.host);
-
         return {
             name: 'Anime4up',
-            title: serverName + ' [' + qualityLabel + ']',
+            title: hostName + ' [' + qualityLabel + ']',
             url: result.url,
             quality: qualityLabel,
             headers: result.headers || {},

@@ -1,6 +1,6 @@
 /**
  * witanime - Built from src/witanime/
- * Generated: 2026-03-30T09:18:21.804Z
+ * Generated: 2026-03-30T15:33:54.692Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -370,37 +370,23 @@ function getStreams(tmdbId, mediaType, season, episode) {
       console.log("[WitAnime] Got " + embeds.length + " embed(s) from backend");
       if (embeds.length === 0)
         return [];
-      var hlsHosts = ["larhu", "vidmoly", "voe"];
-      var mp4Hosts = ["uqload", "file-upload"];
       var sorted = [];
       for (var i = 0; i < embeds.length; i++) {
-        if (embeds[i].resolved && embeds[i].proxyUrl)
+        if (embeds[i].proxyUrl)
           sorted.push(embeds[i]);
       }
       for (var i = 0; i < embeds.length; i++) {
-        if (embeds[i].resolved)
+        if (embeds[i].proxyUrl)
           continue;
-        var h = embeds[i].host || "";
-        for (var j = 0; j < hlsHosts.length; j++) {
-          if (h.indexOf(hlsHosts[j]) > -1) {
-            sorted.push(embeds[i]);
-            break;
-          }
-        }
+        if ((embeds[i].streamType || "").indexOf("m3u8") > -1 || (embeds[i].streamType || "") === "hls")
+          sorted.push(embeds[i]);
       }
       for (var i = 0; i < embeds.length; i++) {
-        if (embeds[i].resolved)
+        if (embeds[i].proxyUrl)
           continue;
-        var h = embeds[i].host || "";
-        var isHls = false;
-        for (var j = 0; j < hlsHosts.length; j++) {
-          if (h.indexOf(hlsHosts[j]) > -1) {
-            isHls = true;
-            break;
-          }
-        }
-        if (!isHls)
-          sorted.push(embeds[i]);
+        if ((embeds[i].streamType || "").indexOf("m3u8") > -1 || (embeds[i].streamType || "") === "hls")
+          continue;
+        sorted.push(embeds[i]);
       }
       var limit = Math.min(sorted.length, 6);
       var streams = [];
@@ -425,24 +411,38 @@ function resolveWithMeta(embed) {
   return __async(this, null, function* () {
     try {
       var qualityLabel = embed.quality || "HD";
+      var hostName = embed.name || getHostName(embed.host);
       if (embed.resolved && embed.proxyUrl) {
-        var serverName = (embed.name || getHostName(embed.host)) + " (Proxy)";
         console.log("[WitAnime] Using server-proxied stream: " + embed.host + " [" + qualityLabel + "]");
         return {
           name: "Anime4up",
-          title: serverName + " [" + qualityLabel + "]",
+          title: hostName + " (Proxy) [" + qualityLabel + "]",
           url: embed.proxyUrl,
           quality: qualityLabel,
+          type: embed.streamType || "mp4",
           headers: {}
+        };
+      }
+      if (embed.resolved && embed.url) {
+        var headers = {};
+        if (embed.referer)
+          headers["Referer"] = embed.referer;
+        console.log("[WitAnime] Using server-resolved stream: " + embed.host + " [" + qualityLabel + "] " + embed.streamType);
+        return {
+          name: "Anime4up",
+          title: hostName + " [" + qualityLabel + "]",
+          url: embed.url,
+          quality: qualityLabel,
+          type: embed.streamType || "m3u8",
+          headers
         };
       }
       var result = yield resolveEmbed(embed);
       if (!result || !result.url)
         return null;
-      var serverName = embed.name || getHostName(embed.host);
       return {
         name: "Anime4up",
-        title: serverName + " [" + qualityLabel + "]",
+        title: hostName + " [" + qualityLabel + "]",
         url: result.url,
         quality: qualityLabel,
         headers: result.headers || {}
