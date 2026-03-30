@@ -67,6 +67,28 @@
         "ar",
         "ja"
       ]
+    },
+    {
+      "id": "AnimeCloud",
+      "name": "AnimeCloud",
+      "description": "Arabic dubbed and subtitled anime — direct MP4 streams from AnimeCloud API",
+      "version": "1.0.0",
+      "author": "Nuvio Team",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/animecloud.js",
+      "enabled": true,
+      "formats": [
+        "mp4"
+      ],
+      "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/animecloud.png",
+      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/animecloud.png",
+      "contentLanguage": [
+        "ar",
+        "ja"
+      ]
     }
   ]
 }
