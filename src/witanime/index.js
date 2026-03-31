@@ -1,11 +1,11 @@
-// WitAnime Nuvio Provider v5.3 — Full server-side resolution (v7.5.1 backend)
+// WitAnime Nuvio Provider v5.4 — Full server-side resolution (v7.5.1 backend)
 // Backend resolves ALL embeds server-side before returning.
 // mp4upload → proxyUrl (ISP-blocked CDN streamed through backend)
 // All other hosts → url (final CDN M3U8/MP4), streamType, referer
 // Client-side resolvers kept as dead-code fallback for older backend responses.
-// v5.3: Match AnimeKai stream format exactly (quality labels, headers, subtitles, provider)
+// v5.4: Backend moved from Render to Oracle Cloud ARM VM
 
-var BACKEND_URL = 'https://witanime-backend.onrender.com';
+var BACKEND_URL = 'http://145.241.158.129:3111';
 var UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
 
 // ── Fetch helper ─────────────────────────────────────────────────────────

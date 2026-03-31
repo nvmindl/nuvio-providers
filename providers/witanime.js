@@ -1,6 +1,6 @@
 /**
  * witanime - Built from src/witanime/
- * Generated: 2026-03-30T16:50:00.071Z
+ * Generated: 2026-03-31T23:00:40.084Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -24,7 +24,7 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/witanime/index.js
-var BACKEND_URL = "https://witanime-backend.onrender.com";
+var BACKEND_URL = "http://145.241.158.129:3111";
 var UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
 function fetchHtml(url, opts) {
   return __async(this, null, function* () {

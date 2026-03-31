@@ -1,6 +1,6 @@
 {
   "name": "Nuvio Providers",
-  "version": "8.4.0",
+  "version": "8.5.0",
   "scrapers": [
     {
       "id": "FaselHD",
@@ -48,8 +48,8 @@
     {
       "id": "WitAnime",
       "name": "WitAnime",
-      "description": "Arabic dubbed and subtitled anime from anime4up (hybrid resolution)",
-      "version": "5.1.0",
+      "description": "Arabic dubbed and subtitled anime from anime4up (Oracle Cloud backend)",
+      "version": "5.4.0",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",
