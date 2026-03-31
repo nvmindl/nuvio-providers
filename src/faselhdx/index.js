@@ -1,4 +1,4 @@
-// FaselHD v9.0.0 — Thin client, backend does all heavy lifting
+// FaselHD v9.1.0 — Thin client, backend does all heavy lifting
 // Backend: Oracle Cloud ARM VM at 145.241.158.129:3112
 // Decryption moved server-side for speed (native Node.js crypto vs pure JS AES)
 
@@ -36,10 +36,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             url = BACKEND + '/streams/series/' + tmdbId + ':' + s + ':' + e + '.json';
         }
 
-        console.log('[Flex] Backend: ' + url);
+        console.log('[FaselHD] Backend: ' + url);
         var resp = await safeFetch(url);
         if (!resp.ok) {
-            console.log('[Flex] Backend returned ' + resp.status);
+            console.log('[FaselHD] Backend returned ' + resp.status);
             return [];
         }
 
@@ -47,7 +47,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         var streams = data.streams || [];
 
         if (!streams.length) {
-            console.log('[Flex] No streams from backend');
+            console.log('[FaselHD] No streams from backend');
             return [];
         }
 
@@ -56,8 +56,8 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         for (var i = 0; i < streams.length; i++) {
             var st = streams[i];
             result.push({
-                name: st.name || 'Flex',
-                title: st.title || 'Flex',
+                name: st.name || 'FaselHD',
+                title: st.title || 'FaselHD',
                 url: st.url,
                 quality: st.quality || 'auto',
                 size: 'Unknown',
@@ -67,10 +67,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             });
         }
 
-        console.log('[Flex] Got ' + result.length + ' streams');
+        console.log('[FaselHD] Got ' + result.length + ' streams');
         return result;
     } catch (error) {
-        console.error('[Flex] Error: ' + error.message);
+        console.error('[FaselHD] Error: ' + error.message);
         return [];
     }
 }

@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-31T23:26:37.342Z
+ * Generated: 2026-03-31T23:47:52.521Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -66,24 +66,24 @@ function getStreams(tmdbId, mediaType, season, episode) {
         var e = parseInt(episode, 10);
         url = BACKEND + "/streams/series/" + tmdbId + ":" + s + ":" + e + ".json";
       }
-      console.log("[Flex] Backend: " + url);
+      console.log("[FaselHD] Backend: " + url);
       var resp = yield safeFetch(url);
       if (!resp.ok) {
-        console.log("[Flex] Backend returned " + resp.status);
+        console.log("[FaselHD] Backend returned " + resp.status);
         return [];
       }
       var data = yield resp.json();
       var streams = data.streams || [];
       if (!streams.length) {
-        console.log("[Flex] No streams from backend");
+        console.log("[FaselHD] No streams from backend");
         return [];
       }
       var result = [];
       for (var i = 0; i < streams.length; i++) {
         var st = streams[i];
         result.push({
-          name: st.name || "Flex",
-          title: st.title || "Flex",
+          name: st.name || "FaselHD",
+          title: st.title || "FaselHD",
           url: st.url,
           quality: st.quality || "auto",
           size: "Unknown",
@@ -92,10 +92,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
           provider: "faselhdx"
         });
       }
-      console.log("[Flex] Got " + result.length + " streams");
+      console.log("[FaselHD] Got " + result.length + " streams");
       return result;
     } catch (error) {
-      console.error("[Flex] Error: " + error.message);
+      console.error("[FaselHD] Error: " + error.message);
       return [];
     }
   });
