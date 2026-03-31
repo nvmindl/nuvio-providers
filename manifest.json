@@ -1,12 +1,12 @@
 {
   "name": "Nuvio Providers",
-  "version": "8.5.0",
+  "version": "9.0.0",
   "scrapers": [
     {
       "id": "FaselHD",
       "name": "FaselHD",
-      "description": "Arabic movies and TV shows with direct HLS streaming",
-      "version": "8.0.0",
+      "description": "Arabic movies and TV shows via Oracle Cloud backend (fast)",
+      "version": "9.0.0",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",
