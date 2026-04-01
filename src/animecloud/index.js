@@ -1,4 +1,4 @@
-// AnimeCloud Nuvio Provider v2.2.0
+// AnimeCloud Nuvio Provider v2.3.0
 // Direct API integration — no backend required.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
 // Matching v2.2: TMDB titles + season names + AniList romaji → AnimeCloud fuzzy match
