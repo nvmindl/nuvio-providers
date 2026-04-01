@@ -166,16 +166,65 @@ async function getTmdbDetails(tmdbId, mediaType, season) {
         }
     }
 
+    // Build season episode counts for absolute episode calculation
+    // Needed for long-runners like One Piece where all eps are under one AnimeCloud entry
+    var seasonEpCounts = null;
+    if (data.seasons && data.seasons.length > 0) {
+        seasonEpCounts = {};
+        for (var i = 0; i < data.seasons.length; i++) {
+            var s = data.seasons[i];
+            if (s.season_number > 0) {
+                seasonEpCounts[s.season_number] = s.episode_count;
+            }
+        }
+    }
+
     return {
         title: data.name || data.title || '',
         originalTitle: data.original_name || data.original_title || '',
         titles: unique,
         year: year,
         seasonName: seasonName,
+        seasonEpCounts: seasonEpCounts,
+        totalSeasons: data.number_of_seasons || 1,
     };
 }
 
 // ── AniList matching (primary — same as AnimeKai) ─────────────────────
+
+// Calculate absolute episode number for long-running anime where all episodes
+// are under one AnimeCloud entry but TMDB splits them across many seasons.
+// e.g. One Piece S22E67 → TMDB ep_number=1155 (absolute), but Nuvio may send 67.
+// Strategy: if TMDB season episode_number > episode (i.e. it's already absolute), use it directly.
+// Otherwise sum prior seasons to get absolute number.
+function calcAbsoluteEpisode(tmdb, season, episode) {
+    if (!tmdb.seasonEpCounts || season <= 1) return episode;
+
+    // Check if TMDB already uses absolute numbering for this season
+    // by seeing if the season's first episode_number > 1
+    // We detect this by checking if S1 ep count < the target episode number
+    // (meaning TMDB uses absolute numbering, the episode is already correct)
+    // Actually we need to sum S1..S(season-1) to know the offset.
+    var offset = 0;
+    for (var s = 1; s < season; s++) {
+        var count = tmdb.seasonEpCounts[s];
+        if (count === undefined) return episode; // can't calculate, bail
+        offset += count;
+    }
+    // If episode + offset equals an absolute number that makes sense, use absolute
+    // But we don't know if Nuvio sends relative or absolute.
+    // Heuristic: if episode <= season's own episode count, it's relative → add offset.
+    // If episode > offset, it might already be absolute (like One Piece TMDB ep 1155).
+    var seasonEpCount = tmdb.seasonEpCounts[season] || 0;
+    if (episode <= seasonEpCount) {
+        // Relative episode number — add prior season offset
+        var absolute = offset + episode;
+        console.log('[AnimeCloud] Absolute ep calc: S' + season + 'E' + episode + ' + offset ' + offset + ' = ep ' + absolute);
+        return absolute;
+    }
+    // Already absolute (episode number > season's own ep count)
+    return episode;
+}
 
 async function searchAniList(title, year) {
     var query = year
@@ -350,7 +399,8 @@ function isMovie(name) {
 }
 
 // Find best matching anime using base title + season number
-function findBestMatch(animeList, searchTitles, targetSeason) {
+// epCount map: animeId → episode count (used to prefer long-runner entries)
+function findBestMatch(animeList, searchTitles, targetSeason, epCountMap) {
     var candidates = [];
 
     for (var i = 0; i < animeList.length; i++) {
@@ -373,6 +423,7 @@ function findBestMatch(animeList, searchTitles, targetSeason) {
                 tScore: bestTitleScore,
                 season: acSeason,
                 name: acName,
+                epCount: (epCountMap && epCountMap[anime.id]) || 0,
             });
         }
     }
@@ -391,6 +442,12 @@ function findBestMatch(animeList, searchTitles, targetSeason) {
             hasExactSeason = true;
         } else if (targetSeason > 1 && c.season !== targetSeason) {
             finalScore -= 20;
+        }
+        // Boost long-runner entries: if this entry has many more episodes than others,
+        // it likely contains all episodes under absolute numbering (e.g. One Piece, Naruto).
+        // Only apply when no exact season match found and entry has 100+ episodes.
+        if (!hasExactSeason && c.epCount > 100) {
+            finalScore += 10;
         }
         if (finalScore > bestScore) {
             bestScore = finalScore;
@@ -631,8 +688,39 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         }
 
         // Phase B: Fall back to standard title + season number matching
+        // Pre-fetch episode counts for top candidates so long-runner entries (e.g. One Piece)
+        // can be preferred over arc-specific sub-entries.
         if (!matchedAnime) {
-            matchedAnime = findBestMatch(animeList, uniqueTitles, targetSeason);
+            // Quick pre-score to find top candidates needing ep count check
+            var preCandidates = [];
+            for (var pi = 0; pi < animeList.length; pi++) {
+                var pa = animeList[pi];
+                var paBase = extractBaseName(pa.name || '');
+                var paBest = 0;
+                for (var pj = 0; pj < uniqueTitles.length; pj++) {
+                    var ps = Math.max(titleScore(uniqueTitles[pj], paBase), titleScore(uniqueTitles[pj], pa.name || ''));
+                    if (ps > paBest) paBest = ps;
+                }
+                if (paBest >= 70) preCandidates.push({ id: pa.id, score: paBest });
+            }
+            // Fetch ep counts in parallel for top candidates (max 5)
+            var epCountMap = {};
+            var epListCache = {}; // cache full episode lists to avoid re-fetching
+            if (preCandidates.length > 1) {
+                preCandidates.sort(function(a,b){return b.score-a.score;});
+                var topN = preCandidates.slice(0, 5);
+                var epFetches = topN.map(function(c) {
+                    return acPost('getAnimeDetails', { animeID: c.id }).then(function(d) {
+                        if (d && d.result) {
+                            epCountMap[c.id] = d.result.length;
+                            epListCache[c.id] = d.result;
+                        }
+                    });
+                });
+                await Promise.all(epFetches);
+                console.log('[AnimeCloud] Pre-fetched ep counts: ' + JSON.stringify(epCountMap));
+            }
+            matchedAnime = findBestMatch(animeList, uniqueTitles, targetSeason, epCountMap);
         }
 
         if (!matchedAnime) {
@@ -641,26 +729,40 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         }
         console.log('[AnimeCloud] Matched: ' + matchedAnime.name + ' (ID: ' + matchedAnime.id + ')');
 
-        // Step 5: Get episode list
-        var details = await acPost('getAnimeDetails', { animeID: matchedAnime.id });
-        if (!details || !details.result) {
-            console.log('[AnimeCloud] Failed to get episode list');
-            return [];
+        // Step 5: Get episode list (use pre-fetched cache if available)
+        var episodes;
+        if (typeof epListCache !== 'undefined' && epListCache[matchedAnime.id]) {
+            episodes = epListCache[matchedAnime.id];
+            console.log('[AnimeCloud] Episodes (cached): ' + episodes.length);
+        } else {
+            var details = await acPost('getAnimeDetails', { animeID: matchedAnime.id });
+            if (!details || !details.result) {
+                console.log('[AnimeCloud] Failed to get episode list');
+                return [];
+            }
+            episodes = details.result;
+            console.log('[AnimeCloud] Episodes: ' + episodes.length);
         }
-
-        var episodes = details.result;
-        console.log('[AnimeCloud] Episodes: ' + episodes.length);
 
         // Step 6: Find target episode (with split-cour fallback)
         // Some TMDB seasons are split into multiple AnimeCloud entries (e.g., Fire Force S3
         // is "San no Shou" eps 1-12 + "San no Shou Part 2" eps 1-12, but TMDB has S3 eps 1-25).
         // When the episode number exceeds the matched entry's count, find the next part.
+        // Also handles long-runners like One Piece where all eps are under one entry with
+        // absolute numbering — convert relative TMDB season episode to absolute if needed.
         var targetEp;
         if (isTV) {
-            targetEp = findEpisode(episodes, episode);
-            if (!targetEp && episode > episodes.length) {
-                console.log('[AnimeCloud] Episode ' + episode + ' not in ' + matchedAnime.name + ' (' + episodes.length + ' eps), trying split-cour fallback');
-                var offsetEp = episode - episodes.length;
+            var lookupEp = episode;
+            // If matched entry has more episodes than one season's worth, it's likely a
+            // long-runner with absolute episode numbering (e.g. One Piece, Naruto).
+            // Convert relative episode to absolute using TMDB season offsets.
+            if (episodes.length > 100 && season > 1 && tmdb.seasonEpCounts) {
+                lookupEp = calcAbsoluteEpisode(tmdb, season, episode);
+            }
+            targetEp = findEpisode(episodes, lookupEp);
+            if (!targetEp && lookupEp > episodes.length) {
+                console.log('[AnimeCloud] Episode ' + lookupEp + ' not in ' + matchedAnime.name + ' (' + episodes.length + ' eps), trying split-cour fallback');
+                var offsetEp = lookupEp - episodes.length;
                 // Find continuation parts: same base name, higher year or "Part 2/3" suffix
                 var matchedBase = normalize(extractBaseName(matchedAnime.name || ''));
                 var continuations = [];
@@ -702,11 +804,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                     if (remaining <= 0) break;
                 }
                 if (!targetEp) {
-                    console.log('[AnimeCloud] Episode ' + episode + ' not found (split-cour search exhausted)');
+                    console.log('[AnimeCloud] Episode ' + lookupEp + ' not found (split-cour search exhausted)');
                     return [];
                 }
             } else if (!targetEp) {
-                console.log('[AnimeCloud] Episode ' + episode + ' not found');
+                console.log('[AnimeCloud] Episode ' + lookupEp + ' not found');
                 return [];
             }
         } else {
