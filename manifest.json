@@ -1,12 +1,12 @@
 {
   "name": "Nuvio Providers",
-      "version": "10.0.0",
+      "version": "11.0.0",
   "scrapers": [
     {
       "id": "FaselHD",
       "name": "FaselHD",
-      "description": "Arabic movies and TV shows — dual pipeline: No Hard Sub + Arabic Hard Sub streams",
-  "version": "10.0.0",
+      "description": "Arabic movies and TV shows — dual pipeline: No Hard Sub + Real FaselHD CDN Arabic Hard Sub streams",
+  "version": "11.0.0",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",
