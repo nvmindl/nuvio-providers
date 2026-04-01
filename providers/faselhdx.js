@@ -1,6 +1,6 @@
 /**
  * faselhdx - Built from src/faselhdx/
- * Generated: 2026-03-31T23:47:52.521Z
+ * Generated: 2026-04-01T00:58:38.659Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -25,7 +25,7 @@ var __async = (__this, __arguments, generator) => {
 
 // src/faselhdx/index.js
 var BACKEND = "http://145.241.158.129:3112";
-var HEADERS = {
+var DEFAULT_HEADERS = {
   "Referer": "https://flixcdn.cyou/",
   "Origin": "https://flixcdn.cyou",
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -81,13 +81,17 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var result = [];
       for (var i = 0; i < streams.length; i++) {
         var st = streams[i];
+        var hdrs = st.headers || DEFAULT_HEADERS;
+        if (!hdrs["User-Agent"]) {
+          hdrs["User-Agent"] = DEFAULT_HEADERS["User-Agent"];
+        }
         result.push({
           name: st.name || "FaselHD",
           title: st.title || "FaselHD",
           url: st.url,
           quality: st.quality || "auto",
           size: "Unknown",
-          headers: HEADERS,
+          headers: hdrs,
           subtitles: st.subtitles || [],
           provider: "faselhdx"
         });
