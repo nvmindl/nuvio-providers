@@ -89,6 +89,28 @@
         "ar",
         "ja"
       ]
+    },
+    {
+      "id": "Cineby",
+      "name": "Cineby",
+      "description": "Multi-server movie and TV streaming — 4K/1080p/720p from Videasy network with multilingual subtitles",
+      "version": "1.0.0",
+      "author": "Nuvio Team",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/cineby.js",
+      "enabled": true,
+      "formats": [
+        "m3u8"
+      ],
+      "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/cineby.png",
+      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/cineby.png",
+      "contentLanguage": [
+        "en",
+        "ar"
+      ]
     }
   ]
 }
