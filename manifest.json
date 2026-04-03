@@ -72,7 +72,7 @@
       "id": "AnimeCloud",
       "name": "AnimeCloud",
       "description": "Arabic dubbed and subtitled anime — direct MP4 streams from AnimeCloud API",
-      "version": "2.3.0",
+      "version": "2.4.0",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",

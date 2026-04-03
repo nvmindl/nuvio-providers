@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-04-01T11:53:25.276Z
+ * Generated: 2026-04-03T13:33:36.187Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -31,6 +31,22 @@ var ANILIST_URL = "https://graphql.anilist.co";
 var AC_API = "https://khkhkhkh.com/animecp/animeapi65/";
 var RNC_PASSWORD = "anime5w&f4H&434*";
 var UA = "AnimeCloud/6.5 CFNetwork/1399 Darwin/22.1.0";
+var FETCH_TIMEOUT = 1e4;
+function fetchWithTimeout(url, options, timeout) {
+  var ms = timeout || FETCH_TIMEOUT;
+  return new Promise(function(resolve, reject) {
+    var timer = setTimeout(function() {
+      reject(new Error("Fetch timeout after " + ms + "ms"));
+    }, ms);
+    fetch(url, options).then(function(response) {
+      clearTimeout(timer);
+      resolve(response);
+    }).catch(function(err) {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
 function acPost(command, params) {
   return __async(this, null, function* () {
     var body = "command=" + encodeURIComponent(command);
@@ -41,7 +57,7 @@ function acPost(command, params) {
       }
     }
     try {
-      var response = yield fetch(AC_API, {
+      var response = yield fetchWithTimeout(AC_API, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -88,9 +104,9 @@ function decryptRNCryptor(base64Data) {
 function wordArrayToBytes(wordArray) {
   var words = wordArray.words;
   var sigBytes = wordArray.sigBytes;
-  var bytes = [];
+  var bytes = new Array(sigBytes);
   for (var i = 0; i < sigBytes; i++) {
-    bytes.push(words[i >>> 2] >>> 24 - i % 4 * 8 & 255);
+    bytes[i] = words[i >>> 2] >>> 24 - i % 4 * 8 & 255;
   }
   return bytes;
 }
@@ -109,7 +125,7 @@ function tmdbGet(path) {
   return __async(this, null, function* () {
     try {
       var url = TMDB_BASE + path + (path.indexOf("?") > -1 ? "&" : "?") + "api_key=" + TMDB_KEY;
-      var response = yield fetch(url, {
+      var response = yield fetchWithTimeout(url, {
         headers: { "Accept": "application/json" }
       });
       if (!response.ok)
@@ -207,7 +223,7 @@ function searchAniList(title, year) {
     var query = year ? "query ($search: String, $year: Int) { Media(search: $search, type: ANIME, seasonYear: $year) { id idMal title { english romaji native } startDate { year } } }" : "query ($search: String) { Media(search: $search, type: ANIME) { id idMal title { english romaji native } startDate { year } } }";
     var variables = year ? { search: title, year } : { search: title };
     try {
-      var response = yield fetch(ANILIST_URL, {
+      var response = yield fetchWithTimeout(ANILIST_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         body: JSON.stringify({ query, variables })
@@ -218,12 +234,9 @@ function searchAniList(title, year) {
       if (data.data && data.data.Media) {
         var media = data.data.Media;
         return {
-          anilistId: media.id,
-          malId: media.idMal,
           romaji: media.title ? media.title.romaji : null,
           english: media.title ? media.title.english : null,
-          native: media.title ? media.title.native : null,
-          year: media.startDate ? media.startDate.year : null
+          native: media.title ? media.title.native : null
         };
       }
       return null;
@@ -264,7 +277,7 @@ function getAniListTitles(tmdbTitle, originalTitle, year) {
 }
 var animeListCache = null;
 var animeListCacheTime = 0;
-var CACHE_TTL = 30 * 60 * 1e3;
+var CACHE_TTL = 2 * 60 * 60 * 1e3;
 function getAnimeList() {
   return __async(this, null, function* () {
     var now = Date.now();
@@ -274,7 +287,12 @@ function getAnimeList() {
     var data = yield acPost("getAllAnime");
     if (!data || !data.result)
       return [];
-    animeListCache = data.result;
+    var raw = data.result;
+    var stripped = new Array(raw.length);
+    for (var i = 0; i < raw.length; i++) {
+      stripped[i] = { id: raw[i].id, name: raw[i].name, year: raw[i].year || "" };
+    }
+    animeListCache = stripped;
     animeListCacheTime = now;
     return animeListCache;
   });
@@ -343,8 +361,19 @@ function titleScore(searchTitle, acTitle) {
 function isMovie(name) {
   return /\bMovie\b/i.test(name) || /\bFilm\b/i.test(name) || /\b0\s+Movie\b/i.test(name);
 }
-function findBestMatch(animeList, searchTitles, targetSeason, epCountMap) {
+function matchAnime(animeList, searchTitles, targetSeason, seasonName) {
   var candidates = [];
+  var franchiseCandidates = [];
+  var normSeason = seasonName ? normalize(seasonName) : null;
+  var seasonWords = null;
+  var useSeasonName = seasonName && !/^Season\s+\d+$/i.test(seasonName.trim());
+  if (useSeasonName && normSeason) {
+    seasonWords = normSeason.split(" ").filter(function(w2) {
+      return w2.length > 2;
+    });
+    if (seasonWords.length === 0)
+      useSeasonName = false;
+  }
   for (var i = 0; i < animeList.length; i++) {
     var anime = animeList[i];
     var acName = anime.name || "";
@@ -358,18 +387,64 @@ function findBestMatch(animeList, searchTitles, targetSeason, epCountMap) {
       if (score > bestTitleScore)
         bestTitleScore = score;
     }
-    if (bestTitleScore >= 40) {
-      candidates.push({
-        anime,
-        tScore: bestTitleScore,
-        season: acSeason,
-        name: acName,
-        epCount: epCountMap && epCountMap[anime.id] || 0
-      });
+    if (bestTitleScore < 40)
+      continue;
+    var entry = {
+      anime,
+      tScore: bestTitleScore,
+      season: acSeason,
+      name: acName
+    };
+    candidates.push(entry);
+    if (useSeasonName && bestTitleScore >= 50) {
+      franchiseCandidates.push(entry);
     }
   }
   if (candidates.length === 0)
     return null;
+  if (useSeasonName && franchiseCandidates.length > 0 && seasonWords) {
+    var bestSnScore = 0;
+    var bestSnMatch = null;
+    for (var i = 0; i < franchiseCandidates.length; i++) {
+      var fullNorm = normalize(franchiseCandidates[i].name);
+      var matched = 0;
+      for (var w = 0; w < seasonWords.length; w++) {
+        if (fullNorm.indexOf(seasonWords[w]) > -1)
+          matched++;
+      }
+      var snScore = matched / seasonWords.length;
+      if (snScore > bestSnScore) {
+        bestSnScore = snScore;
+        bestSnMatch = franchiseCandidates[i];
+      }
+    }
+    if (bestSnScore >= 0.5 && bestSnMatch) {
+      console.log("[AnimeCloud] Season name match: " + bestSnMatch.name);
+      return bestSnMatch.anime;
+    }
+    if (franchiseCandidates.length > 1 && targetSeason > 1) {
+      var tvFranchise = [];
+      for (var i = 0; i < franchiseCandidates.length; i++) {
+        if (!isMovie(franchiseCandidates[i].name)) {
+          tvFranchise.push(franchiseCandidates[i]);
+        }
+      }
+      if (tvFranchise.length > 1) {
+        tvFranchise.sort(function(a, b) {
+          var ya = parseInt(a.anime.year) || 9999;
+          var yb = parseInt(b.anime.year) || 9999;
+          if (ya !== yb)
+            return ya - yb;
+          return a.season - b.season;
+        });
+        var idx = targetSeason - 1;
+        if (idx >= 0 && idx < tvFranchise.length) {
+          console.log("[AnimeCloud] Franchise index match: S" + targetSeason + " -> " + tvFranchise[idx].name);
+          return tvFranchise[idx].anime;
+        }
+      }
+    }
+  }
   var bestScore = 0;
   var bestMatch = null;
   var hasExactSeason = false;
@@ -381,9 +456,6 @@ function findBestMatch(animeList, searchTitles, targetSeason, epCountMap) {
       hasExactSeason = true;
     } else if (targetSeason > 1 && c.season !== targetSeason) {
       finalScore -= 20;
-    }
-    if (!hasExactSeason && c.epCount > 100) {
-      finalScore += 10;
     }
     if (finalScore > bestScore) {
       bestScore = finalScore;
@@ -417,87 +489,6 @@ function findBestMatch(animeList, searchTitles, targetSeason, epCountMap) {
     return null;
   return bestMatch ? bestMatch.anime : null;
 }
-function findBySeasonName(animeList, searchTitles, targetSeason, seasonName) {
-  if (!seasonName)
-    return null;
-  if (/^Season\s+\d+$/i.test(seasonName.trim()))
-    return null;
-  var franchise = [];
-  for (var i = 0; i < animeList.length; i++) {
-    var anime = animeList[i];
-    var acBase = extractBaseName(anime.name || "");
-    for (var j = 0; j < searchTitles.length; j++) {
-      if (titleScore(searchTitles[j], acBase) >= 50) {
-        franchise.push(anime);
-        break;
-      }
-    }
-  }
-  if (franchise.length === 0)
-    return null;
-  var normSeason = normalize(seasonName);
-  var bestScore = 0;
-  var bestMatch = null;
-  for (var i = 0; i < franchise.length; i++) {
-    var fullNorm = normalize(franchise[i].name);
-    var seasonWords = normSeason.split(" ").filter(function(w2) {
-      return w2.length > 2;
-    });
-    var matched = 0;
-    for (var w = 0; w < seasonWords.length; w++) {
-      if (fullNorm.indexOf(seasonWords[w]) > -1)
-        matched++;
-    }
-    var score = seasonWords.length > 0 ? matched / seasonWords.length : 0;
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = franchise[i];
-    }
-  }
-  if (bestScore >= 0.5 && bestMatch) {
-    console.log("[AnimeCloud] Season name match: " + bestMatch.name);
-    return bestMatch;
-  }
-  var seasonSpecificTitles = [];
-  for (var i = 0; i < searchTitles.length; i++) {
-    var normTitle = normalize(searchTitles[i]);
-    if (normTitle.indexOf(normSeason) > -1 && normTitle !== normSeason) {
-      seasonSpecificTitles.push(searchTitles[i]);
-    }
-  }
-  if (seasonSpecificTitles.length > 0) {
-    var best2 = 0;
-    var bestMatch2 = null;
-    for (var i = 0; i < franchise.length; i++) {
-      for (var j = 0; j < seasonSpecificTitles.length; j++) {
-        var s = titleScore(seasonSpecificTitles[j], franchise[i].name);
-        if (s > best2) {
-          best2 = s;
-          bestMatch2 = franchise[i];
-        }
-      }
-    }
-    if (best2 >= 40 && bestMatch2) {
-      console.log("[AnimeCloud] Season-specific title match: " + bestMatch2.name);
-      return bestMatch2;
-    }
-  }
-  if (franchise.length > 1) {
-    var sorted = franchise.slice().sort(function(a, b) {
-      var ya = parseInt(a.year) || 9999;
-      var yb = parseInt(b.year) || 9999;
-      if (ya !== yb)
-        return ya - yb;
-      return extractSeason(a.name) - extractSeason(b.name);
-    });
-    var idx = targetSeason - 1;
-    if (idx >= 0 && idx < sorted.length) {
-      console.log("[AnimeCloud] Franchise index match: S" + targetSeason + " -> " + sorted[idx].name);
-      return sorted[idx];
-    }
-  }
-  return null;
-}
 function parseEpisodeNumber(name) {
   var m = name.match(/(\d+)/);
   if (m)
@@ -526,7 +517,7 @@ function getVideoURLs(epID) {
 function fetchVideoURL(epID, quality) {
   return __async(this, null, function* () {
     try {
-      var response = yield fetch(AC_API, {
+      var response = yield fetchWithTimeout(AC_API, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -557,15 +548,20 @@ function getStreams(tmdbId, mediaType, season, episode) {
     try {
       var isTV = mediaType !== "movie";
       console.log("[AnimeCloud] Request: " + mediaType + " " + tmdbId + (isTV ? " S" + season + "E" + episode : ""));
-      var tmdb = yield getTmdbDetails(tmdbId, mediaType, isTV ? season : null);
+      var tmdbPromise = getTmdbDetails(tmdbId, mediaType, isTV ? season : null);
+      var animeListPromise = getAnimeList();
+      var tmdb = yield tmdbPromise;
       if (!tmdb || !tmdb.titles || tmdb.titles.length === 0) {
         console.log("[AnimeCloud] No TMDB data found");
         return [];
       }
       console.log("[AnimeCloud] TMDB: " + tmdb.title + " (" + tmdb.year + ")" + (tmdb.seasonName ? " [" + tmdb.seasonName + "]" : ""));
+      var anilistPromise = getAniListTitles(tmdb.title, tmdb.originalTitle, tmdb.year);
+      var parallelResults = yield Promise.all([anilistPromise, animeListPromise]);
+      var anilistTitles = parallelResults[0];
+      var animeList = parallelResults[1];
       var searchTitles = tmdb.titles.slice();
-      var anilistTitles = yield getAniListTitles(tmdb.title, tmdb.originalTitle, tmdb.year);
-      if (anilistTitles.length > 0) {
+      if (anilistTitles && anilistTitles.length > 0) {
         console.log("[AnimeCloud] AniList titles: " + anilistTitles.join(", "));
         for (var i = anilistTitles.length - 1; i >= 0; i--) {
           searchTitles.unshift(anilistTitles[i]);
@@ -583,69 +579,25 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       }
       console.log("[AnimeCloud] Search titles: " + uniqueTitles.slice(0, 6).join(" | "));
-      var animeList = yield getAnimeList();
       if (!animeList || animeList.length === 0) {
         console.log("[AnimeCloud] Failed to load anime list");
         return [];
       }
       console.log("[AnimeCloud] Anime catalog: " + animeList.length + " entries");
       var targetSeason = isTV ? season || 1 : 1;
-      var matchedAnime = null;
-      if (isTV && tmdb.seasonName) {
-        matchedAnime = findBySeasonName(animeList, uniqueTitles, targetSeason, tmdb.seasonName);
-      }
-      if (!matchedAnime) {
-        var preCandidates = [];
-        for (var pi = 0; pi < animeList.length; pi++) {
-          var pa = animeList[pi];
-          var paBase = extractBaseName(pa.name || "");
-          var paBest = 0;
-          for (var pj = 0; pj < uniqueTitles.length; pj++) {
-            var ps = Math.max(titleScore(uniqueTitles[pj], paBase), titleScore(uniqueTitles[pj], pa.name || ""));
-            if (ps > paBest)
-              paBest = ps;
-          }
-          if (paBest >= 70)
-            preCandidates.push({ id: pa.id, score: paBest });
-        }
-        var epCountMap = {};
-        var epListCache = {};
-        if (preCandidates.length > 1) {
-          preCandidates.sort(function(a, b) {
-            return b.score - a.score;
-          });
-          var topN = preCandidates.slice(0, 5);
-          var epFetches = topN.map(function(c) {
-            return acPost("getAnimeDetails", { animeID: c.id }).then(function(d) {
-              if (d && d.result) {
-                epCountMap[c.id] = d.result.length;
-                epListCache[c.id] = d.result;
-              }
-            });
-          });
-          yield Promise.all(epFetches);
-          console.log("[AnimeCloud] Pre-fetched ep counts: " + JSON.stringify(epCountMap));
-        }
-        matchedAnime = findBestMatch(animeList, uniqueTitles, targetSeason, epCountMap);
-      }
+      var matchedAnime = matchAnime(animeList, uniqueTitles, targetSeason, isTV ? tmdb.seasonName : null);
       if (!matchedAnime) {
         console.log("[AnimeCloud] No match found");
         return [];
       }
       console.log("[AnimeCloud] Matched: " + matchedAnime.name + " (ID: " + matchedAnime.id + ")");
-      var episodes;
-      if (typeof epListCache !== "undefined" && epListCache[matchedAnime.id]) {
-        episodes = epListCache[matchedAnime.id];
-        console.log("[AnimeCloud] Episodes (cached): " + episodes.length);
-      } else {
-        var details = yield acPost("getAnimeDetails", { animeID: matchedAnime.id });
-        if (!details || !details.result) {
-          console.log("[AnimeCloud] Failed to get episode list");
-          return [];
-        }
-        episodes = details.result;
-        console.log("[AnimeCloud] Episodes: " + episodes.length);
+      var details = yield acPost("getAnimeDetails", { animeID: matchedAnime.id });
+      if (!details || !details.result) {
+        console.log("[AnimeCloud] Failed to get episode list");
+        return [];
       }
+      var episodes = details.result;
+      console.log("[AnimeCloud] Episodes: " + episodes.length);
       var targetEp;
       if (isTV) {
         var lookupEp = episode;
