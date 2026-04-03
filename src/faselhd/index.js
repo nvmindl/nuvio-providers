@@ -1,8 +1,8 @@
-// FaselHD v13.0.0 — Hybrid client+backend scraper
+// FaselHD v14.0.0 — Hybrid client+backend scraper
 // Arabic Hard Sub streams from FaselHD CDN (scdns.io)
 // Client: TMDB → EasyPlex → FaselHD page → player page HTML
 // Backend: VM sandbox extraction of obfuscated JS → scdns.io m3u8 URLs
-// Streams are IP-locked to fetching device — no proxy needed.
+// Returns master m3u8 (auto quality — player handles 1080p/720p/360p switching)
 
 var TMDB_KEY = '439c478a771f35c05022f9feabcca01c';
 var TMDB_BASE = 'https://api.themoviedb.org/3';
@@ -75,6 +75,34 @@ function easyplexFetch(endpoint) {
     return tryNext();
 }
 
+// ── Title similarity ──────────────────────────────────────────────────
+
+function normalizeTitle(t) {
+    return (t || '').toLowerCase()
+        .replace(/[''`]/g, '')
+        .replace(/[^a-z0-9\u0600-\u06FF]+/g, ' ')
+        .trim();
+}
+
+function titleMatch(a, b) {
+    var na = normalizeTitle(a);
+    var nb = normalizeTitle(b);
+    if (!na || !nb) return 0;
+    if (na === nb) return 100;
+    if (na.indexOf(nb) !== -1 || nb.indexOf(na) !== -1) return 90;
+    // Word overlap
+    var wa = na.split(' ').filter(function(w) { return w.length > 1; });
+    var wb = nb.split(' ').filter(function(w) { return w.length > 1; });
+    if (!wa.length || !wb.length) return 0;
+    var common = 0;
+    for (var i = 0; i < wa.length; i++) {
+        for (var j = 0; j < wb.length; j++) {
+            if (wa[i] === wb[j]) { common++; break; }
+        }
+    }
+    return Math.round(common * 100 / Math.max(wa.length, wb.length));
+}
+
 // ── Resolve TMDB ID → FaselHD page URL via EasyPlex ───────────────────
 
 async function resolveFaselPageUrl(tmdbId, mediaType, season, episode) {
@@ -87,24 +115,63 @@ async function resolveFaselPageUrl(tmdbId, mediaType, season, episode) {
     if (!title) return null;
     console.log('[FaselHD] TMDB: ' + title);
 
+    // Search EasyPlex and collect both tmdb_id matches and null-tmdb candidates
     async function searchByTitle(searchTitle) {
         var data = await easyplexFetch('search/' + encodeURIComponent(searchTitle) + '/0');
-        if (!data) return null;
+        if (!data) return { match: null, nullCandidates: [] };
         var items = data.search || data.data || [];
         if (Array.isArray(data)) items = data;
+        var nullCandidates = [];
         for (var i = 0; i < items.length; i++) {
-            if (String(items[i].tmdb_id) === String(tmdbId)) return items[i];
+            if (String(items[i].tmdb_id) === String(tmdbId)) return { match: items[i], nullCandidates: [] };
+            if (!items[i].tmdb_id) nullCandidates.push(items[i]);
         }
-        return null;
+        return { match: null, nullCandidates: nullCandidates };
     }
 
-    var match = await searchByTitle(title);
+    var result = await searchByTitle(title);
+    var match = result.match;
+    var nullCandidates = result.nullCandidates;
+
     if (!match) {
         var origTitle = tmdbData.original_title || tmdbData.original_name || '';
         if (origTitle && origTitle !== title) {
-            match = await searchByTitle(origTitle);
+            var result2 = await searchByTitle(origTitle);
+            if (result2.match) match = result2.match;
+            else nullCandidates = nullCandidates.concat(result2.nullCandidates);
         }
     }
+
+    // Fallback: for items with null tmdb_id, fetch details and match by title
+    if (!match && nullCandidates.length > 0) {
+        console.log('[FaselHD] Trying ' + nullCandidates.length + ' null-tmdb candidate(s)...');
+        var detailEndpoint = mediaType === 'movie' ? 'media/detail/' : 'series/show/';
+        // Deduplicate by id
+        var seenIds = {};
+        var uniqueCandidates = [];
+        for (var c = 0; c < nullCandidates.length; c++) {
+            if (!seenIds[nullCandidates[c].id]) {
+                seenIds[nullCandidates[c].id] = true;
+                uniqueCandidates.push(nullCandidates[c]);
+            }
+        }
+        // Check up to 5 candidates
+        for (var ci = 0; ci < Math.min(uniqueCandidates.length, 5); ci++) {
+            var candidate = uniqueCandidates[ci];
+            var detail = await easyplexFetch(detailEndpoint + candidate.id + '/0');
+            if (!detail) continue;
+            var detailTitle = detail.title || detail.name || detail.original_name || '';
+            if (!detailTitle) continue;
+            var score = Math.max(titleMatch(title, detailTitle), titleMatch(tmdbData.original_title || tmdbData.original_name || '', detailTitle));
+            console.log('[FaselHD] Candidate id=' + candidate.id + ' "' + detailTitle.substring(0, 50) + '" score=' + score);
+            if (score >= 60) {
+                match = candidate;
+                console.log('[FaselHD] Title match! id=' + candidate.id);
+                break;
+            }
+        }
+    }
+
     if (!match) { console.log('[FaselHD] No EasyPlex match'); return null; }
     console.log('[FaselHD] Match id=' + match.id);
 
@@ -178,64 +245,6 @@ async function extractPlayerTokens(faselUrl) {
     return { tokens: tokens, hostname: hostname };
 }
 
-// ── Parse master m3u8 for individual quality variant URLs ─────────────
-
-function detectQuality(variantUrl, height, width) {
-    // First check filename hints (most reliable for FaselHD)
-    var urlLower = variantUrl.toLowerCase();
-    if (urlLower.indexOf('1080') !== -1 || urlLower.indexOf('hd1080') !== -1) return '1080p';
-    if (urlLower.indexOf('720') !== -1 || urlLower.indexOf('hd720') !== -1) return '720p';
-    if (urlLower.indexOf('480') !== -1 || urlLower.indexOf('sd480') !== -1) return '480p';
-    if (urlLower.indexOf('360') !== -1 || urlLower.indexOf('sd360') !== -1) return '360p';
-
-    // Fall back to resolution (use width for widescreen content)
-    if (width >= 1920 || height >= 1080) return '1080p';
-    if (width >= 1280 || height >= 720) return '720p';
-    if (width >= 854 || height >= 480) return '480p';
-    if (width > 0 || height > 0) return '360p';
-
-    return 'auto';
-}
-
-function parseM3u8Qualities(masterUrl, m3u8Text) {
-    var lines = m3u8Text.split('\n');
-    var variants = [];
-    var baseUrl = masterUrl.substring(0, masterUrl.lastIndexOf('/') + 1);
-
-    for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
-            // Parse resolution
-            var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
-            var bwMatch = line.match(/BANDWIDTH=(\d+)/);
-            var width = resMatch ? parseInt(resMatch[1], 10) : 0;
-            var height = resMatch ? parseInt(resMatch[2], 10) : 0;
-            var bw = bwMatch ? parseInt(bwMatch[1], 10) : 0;
-
-            // Next non-comment line is the variant URL
-            var variantUrl = '';
-            for (var j = i + 1; j < lines.length; j++) {
-                var nextLine = lines[j].trim();
-                if (nextLine && nextLine.charAt(0) !== '#') {
-                    variantUrl = nextLine;
-                    break;
-                }
-            }
-            if (!variantUrl) continue;
-
-            // Make absolute
-            if (variantUrl.indexOf('http') !== 0) {
-                variantUrl = baseUrl + variantUrl;
-            }
-
-            var quality = detectQuality(variantUrl, height, width);
-            variants.push({ url: variantUrl, quality: quality, height: height, bandwidth: bw });
-        }
-    }
-
-    return variants;
-}
-
 // ── Extract streams from a single player token ────────────────────────
 
 async function extractStreamsFromToken(token, hostname) {
@@ -284,37 +293,13 @@ async function extractStreamsFromToken(token, hostname) {
 
     console.log('[FaselHD] Backend returned ' + extractData.streams.length + ' stream(s)');
 
-    // For each returned stream, check if it's a master m3u8 and try to parse quality variants
+    // Return master m3u8 URLs directly with "auto" quality
+    // The player handles 1080p/720p/360p switching internally
     var results = [];
     for (var i = 0; i < extractData.streams.length; i++) {
         var stream = extractData.streams[i];
         if (!stream.url) continue;
-
-        // If it's a master m3u8, fetch it and parse quality variants
-        if (stream.url.indexOf('master.m3u8') !== -1 || stream.url.indexOf('master.') !== -1) {
-            console.log('[FaselHD] Fetching master m3u8 for qualities...');
-            var m3u8Text = await fetchText(stream.url, {
-                'Referer': 'https://' + hostname + '/',
-                'Origin': 'https://' + hostname,
-            });
-
-            if (m3u8Text && m3u8Text.indexOf('#EXTM3U') !== -1 && m3u8Text.indexOf('#EXT-X-STREAM-INF') !== -1) {
-                var variants = parseM3u8Qualities(stream.url, m3u8Text);
-                if (variants.length > 0) {
-                    console.log('[FaselHD] Found ' + variants.length + ' quality variants');
-                    // Sort by height descending
-                    variants.sort(function(a, b) { return b.height - a.height; });
-                    for (var v = 0; v < variants.length; v++) {
-                        results.push({ url: variants[v].url, quality: variants[v].quality });
-                    }
-                    continue;
-                }
-            }
-            // If master m3u8 parsing failed, just use master URL as-is
-            console.log('[FaselHD] Using master m3u8 directly');
-        }
-
-        results.push({ url: stream.url, quality: stream.quality || 'auto' });
+        results.push({ url: stream.url, quality: 'auto' });
     }
 
     return results;

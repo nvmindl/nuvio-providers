@@ -1,6 +1,6 @@
 /**
  * faselhd - Built from src/faselhd/
- * Generated: 2026-04-03T18:53:52.939Z
+ * Generated: 2026-04-03T19:10:21.917Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -104,6 +104,37 @@ function easyplexFetch(endpoint) {
   }
   return tryNext();
 }
+function normalizeTitle(t) {
+  return (t || "").toLowerCase().replace(/[''`]/g, "").replace(/[^a-z0-9\u0600-\u06FF]+/g, " ").trim();
+}
+function titleMatch(a, b) {
+  var na = normalizeTitle(a);
+  var nb = normalizeTitle(b);
+  if (!na || !nb)
+    return 0;
+  if (na === nb)
+    return 100;
+  if (na.indexOf(nb) !== -1 || nb.indexOf(na) !== -1)
+    return 90;
+  var wa = na.split(" ").filter(function(w) {
+    return w.length > 1;
+  });
+  var wb = nb.split(" ").filter(function(w) {
+    return w.length > 1;
+  });
+  if (!wa.length || !wb.length)
+    return 0;
+  var common = 0;
+  for (var i = 0; i < wa.length; i++) {
+    for (var j = 0; j < wb.length; j++) {
+      if (wa[i] === wb[j]) {
+        common++;
+        break;
+      }
+    }
+  }
+  return Math.round(common * 100 / Math.max(wa.length, wb.length));
+}
 function resolveFaselPageUrl(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     var tmdbType = mediaType === "movie" ? "movie" : "tv";
@@ -119,22 +150,59 @@ function resolveFaselPageUrl(tmdbId, mediaType, season, episode) {
       return __async(this, null, function* () {
         var data = yield easyplexFetch("search/" + encodeURIComponent(searchTitle) + "/0");
         if (!data)
-          return null;
+          return { match: null, nullCandidates: [] };
         var items = data.search || data.data || [];
         if (Array.isArray(data))
           items = data;
+        var nullCandidates2 = [];
         for (var i2 = 0; i2 < items.length; i2++) {
           if (String(items[i2].tmdb_id) === String(tmdbId))
-            return items[i2];
+            return { match: items[i2], nullCandidates: [] };
+          if (!items[i2].tmdb_id)
+            nullCandidates2.push(items[i2]);
         }
-        return null;
+        return { match: null, nullCandidates: nullCandidates2 };
       });
     }
-    var match = yield searchByTitle(title);
+    var result = yield searchByTitle(title);
+    var match = result.match;
+    var nullCandidates = result.nullCandidates;
     if (!match) {
       var origTitle = tmdbData.original_title || tmdbData.original_name || "";
       if (origTitle && origTitle !== title) {
-        match = yield searchByTitle(origTitle);
+        var result2 = yield searchByTitle(origTitle);
+        if (result2.match)
+          match = result2.match;
+        else
+          nullCandidates = nullCandidates.concat(result2.nullCandidates);
+      }
+    }
+    if (!match && nullCandidates.length > 0) {
+      console.log("[FaselHD] Trying " + nullCandidates.length + " null-tmdb candidate(s)...");
+      var detailEndpoint = mediaType === "movie" ? "media/detail/" : "series/show/";
+      var seenIds = {};
+      var uniqueCandidates = [];
+      for (var c = 0; c < nullCandidates.length; c++) {
+        if (!seenIds[nullCandidates[c].id]) {
+          seenIds[nullCandidates[c].id] = true;
+          uniqueCandidates.push(nullCandidates[c]);
+        }
+      }
+      for (var ci = 0; ci < Math.min(uniqueCandidates.length, 5); ci++) {
+        var candidate = uniqueCandidates[ci];
+        var detail = yield easyplexFetch(detailEndpoint + candidate.id + "/0");
+        if (!detail)
+          continue;
+        var detailTitle = detail.title || detail.name || detail.original_name || "";
+        if (!detailTitle)
+          continue;
+        var score = Math.max(titleMatch(title, detailTitle), titleMatch(tmdbData.original_title || tmdbData.original_name || "", detailTitle));
+        console.log("[FaselHD] Candidate id=" + candidate.id + ' "' + detailTitle.substring(0, 50) + '" score=' + score);
+        if (score >= 60) {
+          match = candidate;
+          console.log("[FaselHD] Title match! id=" + candidate.id);
+          break;
+        }
       }
     }
     if (!match) {
@@ -224,57 +292,6 @@ function extractPlayerTokens(faselUrl) {
     return { tokens, hostname };
   });
 }
-function detectQuality(variantUrl, height, width) {
-  var urlLower = variantUrl.toLowerCase();
-  if (urlLower.indexOf("1080") !== -1 || urlLower.indexOf("hd1080") !== -1)
-    return "1080p";
-  if (urlLower.indexOf("720") !== -1 || urlLower.indexOf("hd720") !== -1)
-    return "720p";
-  if (urlLower.indexOf("480") !== -1 || urlLower.indexOf("sd480") !== -1)
-    return "480p";
-  if (urlLower.indexOf("360") !== -1 || urlLower.indexOf("sd360") !== -1)
-    return "360p";
-  if (width >= 1920 || height >= 1080)
-    return "1080p";
-  if (width >= 1280 || height >= 720)
-    return "720p";
-  if (width >= 854 || height >= 480)
-    return "480p";
-  if (width > 0 || height > 0)
-    return "360p";
-  return "auto";
-}
-function parseM3u8Qualities(masterUrl, m3u8Text) {
-  var lines = m3u8Text.split("\n");
-  var variants = [];
-  var baseUrl = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i].trim();
-    if (line.indexOf("#EXT-X-STREAM-INF") === 0) {
-      var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
-      var bwMatch = line.match(/BANDWIDTH=(\d+)/);
-      var width = resMatch ? parseInt(resMatch[1], 10) : 0;
-      var height = resMatch ? parseInt(resMatch[2], 10) : 0;
-      var bw = bwMatch ? parseInt(bwMatch[1], 10) : 0;
-      var variantUrl = "";
-      for (var j = i + 1; j < lines.length; j++) {
-        var nextLine = lines[j].trim();
-        if (nextLine && nextLine.charAt(0) !== "#") {
-          variantUrl = nextLine;
-          break;
-        }
-      }
-      if (!variantUrl)
-        continue;
-      if (variantUrl.indexOf("http") !== 0) {
-        variantUrl = baseUrl + variantUrl;
-      }
-      var quality = detectQuality(variantUrl, height, width);
-      variants.push({ url: variantUrl, quality, height, bandwidth: bw });
-    }
-  }
-  return variants;
-}
 function extractStreamsFromToken(token, hostname) {
   return __async(this, null, function* () {
     var playerUrl = "https://" + hostname + "/video_player?player_token=" + encodeURIComponent(token);
@@ -322,28 +339,7 @@ function extractStreamsFromToken(token, hostname) {
       var stream = extractData.streams[i];
       if (!stream.url)
         continue;
-      if (stream.url.indexOf("master.m3u8") !== -1 || stream.url.indexOf("master.") !== -1) {
-        console.log("[FaselHD] Fetching master m3u8 for qualities...");
-        var m3u8Text = yield fetchText(stream.url, {
-          "Referer": "https://" + hostname + "/",
-          "Origin": "https://" + hostname
-        });
-        if (m3u8Text && m3u8Text.indexOf("#EXTM3U") !== -1 && m3u8Text.indexOf("#EXT-X-STREAM-INF") !== -1) {
-          var variants = parseM3u8Qualities(stream.url, m3u8Text);
-          if (variants.length > 0) {
-            console.log("[FaselHD] Found " + variants.length + " quality variants");
-            variants.sort(function(a, b) {
-              return b.height - a.height;
-            });
-            for (var v = 0; v < variants.length; v++) {
-              results.push({ url: variants[v].url, quality: variants[v].quality });
-            }
-            continue;
-          }
-        }
-        console.log("[FaselHD] Using master m3u8 directly");
-      }
-      results.push({ url: stream.url, quality: stream.quality || "auto" });
+      results.push({ url: stream.url, quality: "auto" });
     }
     return results;
   });
