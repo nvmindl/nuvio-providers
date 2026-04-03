@@ -1,6 +1,6 @@
 /**
  * faselhd - Built from src/faselhd/
- * Generated: 2026-04-03T19:10:21.917Z
+ * Generated: 2026-04-03T19:42:46.570Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -292,6 +292,54 @@ function extractPlayerTokens(faselUrl) {
     return { tokens, hostname };
   });
 }
+function parseM3u8Variants(masterUrl, m3u8Text) {
+  var lines = m3u8Text.split("\n");
+  var variants = [];
+  var baseUrl = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (line.indexOf("#EXT-X-STREAM-INF") !== 0)
+      continue;
+    var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
+    var width = resMatch ? parseInt(resMatch[1], 10) : 0;
+    var height = resMatch ? parseInt(resMatch[2], 10) : 0;
+    var variantUrl = "";
+    for (var j = i + 1; j < lines.length; j++) {
+      var next = lines[j].trim();
+      if (next && next.charAt(0) !== "#") {
+        variantUrl = next;
+        break;
+      }
+    }
+    if (!variantUrl)
+      continue;
+    if (variantUrl.indexOf("http") !== 0)
+      variantUrl = baseUrl + variantUrl;
+    var urlLower = variantUrl.toLowerCase();
+    var quality = "auto";
+    if (urlLower.indexOf("1080") !== -1)
+      quality = "1080p";
+    else if (urlLower.indexOf("720") !== -1)
+      quality = "720p";
+    else if (urlLower.indexOf("480") !== -1)
+      quality = "480p";
+    else if (urlLower.indexOf("360") !== -1)
+      quality = "360p";
+    else if (height >= 1080)
+      quality = "1080p";
+    else if (height >= 720)
+      quality = "720p";
+    else if (height >= 480)
+      quality = "480p";
+    else if (height > 0)
+      quality = "360p";
+    variants.push({ url: variantUrl, quality, height });
+  }
+  variants.sort(function(a, b) {
+    return b.height - a.height;
+  });
+  return variants;
+}
 function extractStreamsFromToken(token, hostname) {
   return __async(this, null, function* () {
     var playerUrl = "https://" + hostname + "/video_player?player_token=" + encodeURIComponent(token);
@@ -339,7 +387,29 @@ function extractStreamsFromToken(token, hostname) {
       var stream = extractData.streams[i];
       if (!stream.url)
         continue;
-      results.push({ url: stream.url, quality: "auto" });
+      if (stream.url.indexOf(".m3u8") !== -1) {
+        console.log("[FaselHD] Fetching master m3u8...");
+        try {
+          var m3u8Text = yield fetchText(stream.url, {
+            "Referer": "https://" + hostname + "/",
+            "Origin": "https://" + hostname,
+            "Accept": "*/*"
+          });
+          if (m3u8Text && m3u8Text.indexOf("#EXT-X-STREAM-INF") !== -1) {
+            var variants = parseM3u8Variants(stream.url, m3u8Text);
+            if (variants.length > 0) {
+              console.log("[FaselHD] Parsed " + variants.length + " quality variant(s)");
+              for (var v = 0; v < variants.length; v++) {
+                results.push({ url: variants[v].url, quality: variants[v].quality });
+              }
+              continue;
+            }
+          }
+        } catch (e) {
+          console.log("[FaselHD] m3u8 parse failed: " + e.message);
+        }
+      }
+      results.push({ url: stream.url, quality: stream.quality || "auto" });
     }
     return results;
   });

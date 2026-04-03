@@ -1,8 +1,8 @@
-// FaselHD v14.0.0 — Hybrid client+backend scraper
+// FaselHD v15.0.0 — Hybrid client+backend scraper
 // Arabic Hard Sub streams from FaselHD CDN (scdns.io)
 // Client: TMDB → EasyPlex → FaselHD page → player page HTML
 // Backend: VM sandbox extraction of obfuscated JS → scdns.io m3u8 URLs
-// Returns master m3u8 (auto quality — player handles 1080p/720p/360p switching)
+// Client parses master m3u8 → returns 1080p/720p/360p variant streams
 
 var TMDB_KEY = '439c478a771f35c05022f9feabcca01c';
 var TMDB_BASE = 'https://api.themoviedb.org/3';
@@ -245,6 +245,52 @@ async function extractPlayerTokens(faselUrl) {
     return { tokens: tokens, hostname: hostname };
 }
 
+// ── Parse master m3u8 for quality variants ────────────────────────────
+
+function parseM3u8Variants(masterUrl, m3u8Text) {
+    var lines = m3u8Text.split('\n');
+    var variants = [];
+    var baseUrl = masterUrl.substring(0, masterUrl.lastIndexOf('/') + 1);
+
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf('#EXT-X-STREAM-INF') !== 0) continue;
+
+        var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
+        var width = resMatch ? parseInt(resMatch[1], 10) : 0;
+        var height = resMatch ? parseInt(resMatch[2], 10) : 0;
+
+        // Next non-empty non-comment line is the variant URL
+        var variantUrl = '';
+        for (var j = i + 1; j < lines.length; j++) {
+            var next = lines[j].trim();
+            if (next && next.charAt(0) !== '#') { variantUrl = next; break; }
+        }
+        if (!variantUrl) continue;
+
+        // Make absolute if relative
+        if (variantUrl.indexOf('http') !== 0) variantUrl = baseUrl + variantUrl;
+
+        // Detect quality from URL filename (hd1080, hd720, sd360, sd480)
+        var urlLower = variantUrl.toLowerCase();
+        var quality = 'auto';
+        if (urlLower.indexOf('1080') !== -1) quality = '1080p';
+        else if (urlLower.indexOf('720') !== -1) quality = '720p';
+        else if (urlLower.indexOf('480') !== -1) quality = '480p';
+        else if (urlLower.indexOf('360') !== -1) quality = '360p';
+        else if (height >= 1080) quality = '1080p';
+        else if (height >= 720) quality = '720p';
+        else if (height >= 480) quality = '480p';
+        else if (height > 0) quality = '360p';
+
+        variants.push({ url: variantUrl, quality: quality, height: height });
+    }
+
+    // Sort by height descending (1080 first)
+    variants.sort(function(a, b) { return b.height - a.height; });
+    return variants;
+}
+
 // ── Extract streams from a single player token ────────────────────────
 
 async function extractStreamsFromToken(token, hostname) {
@@ -293,13 +339,38 @@ async function extractStreamsFromToken(token, hostname) {
 
     console.log('[FaselHD] Backend returned ' + extractData.streams.length + ' stream(s)');
 
-    // Return master m3u8 URLs directly with "auto" quality
-    // The player handles 1080p/720p/360p switching internally
+    // For each stream URL, try to fetch & parse master m3u8 for quality variants
     var results = [];
     for (var i = 0; i < extractData.streams.length; i++) {
         var stream = extractData.streams[i];
         if (!stream.url) continue;
-        results.push({ url: stream.url, quality: 'auto' });
+
+        // Try to parse master m3u8 to get individual quality variants
+        if (stream.url.indexOf('.m3u8') !== -1) {
+            console.log('[FaselHD] Fetching master m3u8...');
+            try {
+                var m3u8Text = await fetchText(stream.url, {
+                    'Referer': 'https://' + hostname + '/',
+                    'Origin': 'https://' + hostname,
+                    'Accept': '*/*',
+                });
+                if (m3u8Text && m3u8Text.indexOf('#EXT-X-STREAM-INF') !== -1) {
+                    var variants = parseM3u8Variants(stream.url, m3u8Text);
+                    if (variants.length > 0) {
+                        console.log('[FaselHD] Parsed ' + variants.length + ' quality variant(s)');
+                        for (var v = 0; v < variants.length; v++) {
+                            results.push({ url: variants[v].url, quality: variants[v].quality });
+                        }
+                        continue;
+                    }
+                }
+            } catch (e) {
+                console.log('[FaselHD] m3u8 parse failed: ' + e.message);
+            }
+        }
+
+        // Fallback: return as-is with auto quality
+        results.push({ url: stream.url, quality: stream.quality || 'auto' });
     }
 
     return results;
