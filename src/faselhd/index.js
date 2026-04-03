@@ -1,13 +1,15 @@
-// FaselHD v12.0.0 — Full client-side scraper, NO backend dependency
+// FaselHD v13.0.0 — Hybrid client+backend scraper
 // Arabic Hard Sub streams from FaselHD CDN (scdns.io)
-// EasyPlex API → fasel-hd.cam → player_token → obfuscated JS → scdns.io m3u8
+// Client: TMDB → EasyPlex → FaselHD page → player page HTML
+// Backend: VM sandbox extraction of obfuscated JS → scdns.io m3u8 URLs
 // Streams are IP-locked to fetching device — no proxy needed.
 
 var TMDB_KEY = '439c478a771f35c05022f9feabcca01c';
 var TMDB_BASE = 'https://api.themoviedb.org/3';
+var EXTRACT_URL = 'http://145.241.158.129:3112/extract';
 var UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 var FETCH_TIMEOUT = 12000;
-var GLOBAL_TIMEOUT = 20000;
+var GLOBAL_TIMEOUT = 25000;
 
 // EasyPlex API backends (map TMDB ID → fasel-hd.cam page URL)
 var EASYPLEX_BASES = [
@@ -176,176 +178,143 @@ async function extractPlayerTokens(faselUrl) {
     return { tokens: tokens, hostname: hostname };
 }
 
-// ── Execute obfuscated player script to capture stream URLs ───────────
-// Temporarily injects stub globals onto globalThis, runs via indirect eval,
-// then restores originals. The obfuscated code uses (function(x){...})(this)
-// where 'this' must resolve to the global object.
+// ── Parse master m3u8 for individual quality variant URLs ─────────────
 
-function executePlayerScript(scriptContent) {
-    var g = typeof globalThis !== 'undefined' ? globalThis : (typeof self !== 'undefined' ? self : (typeof window !== 'undefined' ? window : {}));
+function detectQuality(variantUrl, height, width) {
+    // First check filename hints (most reliable for FaselHD)
+    var urlLower = variantUrl.toLowerCase();
+    if (urlLower.indexOf('1080') !== -1 || urlLower.indexOf('hd1080') !== -1) return '1080p';
+    if (urlLower.indexOf('720') !== -1 || urlLower.indexOf('hd720') !== -1) return '720p';
+    if (urlLower.indexOf('480') !== -1 || urlLower.indexOf('sd480') !== -1) return '480p';
+    if (urlLower.indexOf('360') !== -1 || urlLower.indexOf('sd360') !== -1) return '360p';
 
-    var saved = {};
-    var STUB_KEYS = ['document', 'jwplayer', 'Hls', 'navigator', 'location', 'screen',
-        'jQuery', '$', 'XMLHttpRequest'];
+    // Fall back to resolution (use width for widescreen content)
+    if (width >= 1920 || height >= 1080) return '1080p';
+    if (width >= 1280 || height >= 720) return '720p';
+    if (width >= 854 || height >= 480) return '480p';
+    if (width > 0 || height > 0) return '360p';
 
-    for (var k = 0; k < STUB_KEYS.length; k++) {
-        var key = STUB_KEYS[k];
-        if (key in g) saved[key] = g[key];
-    }
+    return 'auto';
+}
 
-    var capturedUrl = null;
-    var capturedConfig = null;
+function parseM3u8Qualities(masterUrl, m3u8Text) {
+    var lines = m3u8Text.split('\n');
+    var variants = [];
+    var baseUrl = masterUrl.substring(0, masterUrl.lastIndexOf('/') + 1);
 
-    var fakeVideo = {
-        canPlayType: function(t) { return /mpegurl|mp4/i.test(t) ? 'probably' : ''; },
-    };
-    Object.defineProperty(fakeVideo, 'src', {
-        set: function(v) { capturedUrl = v; },
-        get: function() { return capturedUrl || ''; },
-        configurable: true,
-    });
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
+            // Parse resolution
+            var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
+            var bwMatch = line.match(/BANDWIDTH=(\d+)/);
+            var width = resMatch ? parseInt(resMatch[1], 10) : 0;
+            var height = resMatch ? parseInt(resMatch[2], 10) : 0;
+            var bw = bwMatch ? parseInt(bwMatch[1], 10) : 0;
 
-    var elStub = {
-        style: {}, innerHTML: '', setAttribute: function() {}, getAttribute: function() { return ''; },
-        appendChild: function() { return this; }, removeChild: function() {},
-        addEventListener: function() {}, removeEventListener: function() {},
-        classList: { add: function() {}, remove: function() {}, contains: function() { return false; }, toggle: function() {} },
-        canPlayType: function(t) { return /mpegurl|mp4/i.test(t) ? 'probably' : ''; },
-        src: '', querySelector: function() { return null; }, querySelectorAll: function() { return []; },
-        children: [], childNodes: [], insertBefore: function() {},
-        getBoundingClientRect: function() { return { top: 0, left: 0, width: 1920, height: 1080 }; },
-        offsetWidth: 1920, offsetHeight: 1080, cloneNode: function() { return elStub; },
-        play: function() { return Promise.resolve(); }, pause: function() {}, load: function() {},
-        focus: function() {}, blur: function() {}, click: function() {}, dispatchEvent: function() {},
-        getContext: function() { return { fillRect: function() {}, clearRect: function() {}, drawImage: function() {} }; },
-        toDataURL: function() { return ''; }, width: 0, height: 0,
-    };
+            // Next non-comment line is the variant URL
+            var variantUrl = '';
+            for (var j = i + 1; j < lines.length; j++) {
+                var nextLine = lines[j].trim();
+                if (nextLine && nextLine.charAt(0) !== '#') {
+                    variantUrl = nextLine;
+                    break;
+                }
+            }
+            if (!variantUrl) continue;
 
-    g.document = {
-        getElementById: function() { return fakeVideo; },
-        createElement: function(t) { var e = {}; for (var k in elStub) e[k] = elStub[k]; e.tagName = (t || '').toUpperCase(); return e; },
-        createDocumentFragment: function() { return elStub; },
-        querySelectorAll: function() { return [{ children: [null, null, null], insertBefore: function() {} }]; },
-        querySelector: function() { return null; },
-        getElementsByTagName: function(t) { return t === 'head' ? [{ appendChild: function() {} }] : []; },
-        getElementsByClassName: function() { return []; },
-        createTextNode: function() { return { textContent: '' }; },
-        createEvent: function() { return { initEvent: function() {} }; },
-        createElementNS: function(ns, t) { return g.document.createElement(t); },
-        cookie: '', body: elStub, head: { appendChild: function() {}, removeChild: function() {} },
-        documentElement: elStub, addEventListener: function() {}, removeEventListener: function() {},
-        readyState: 'complete', title: '', domain: '', referrer: '', URL: '', baseURI: '',
-        implementation: { hasFeature: function() { return false; } },
-    };
+            // Make absolute
+            if (variantUrl.indexOf('http') !== 0) {
+                variantUrl = baseUrl + variantUrl;
+            }
 
-    var fakePlayer = {
-        setup: function(cfg) { capturedConfig = cfg; return fakePlayer; },
-        on: function() { return fakePlayer; }, load: function() { return fakePlayer; },
-        play: function() { return fakePlayer; }, seek: function() { return fakePlayer; },
-        pause: function() { return fakePlayer; }, stop: function() { return fakePlayer; },
-        getPosition: function() { return 0; }, getState: function() { return 'idle'; },
-        getDuration: function() { return 0; }, getFullscreen: function() { return false; },
-        setCurrentQuality: function() { return fakePlayer; },
-        getQualityLevels: function() { return []; }, addButton: function() { return fakePlayer; },
-        getBuffer: function() { return 0; }, getMute: function() { return false; },
-        setMute: function() { return fakePlayer; }, getVolume: function() { return 100; },
-        setVolume: function() { return fakePlayer; }, resize: function() { return fakePlayer; },
-        remove: function() { return fakePlayer; },
-    };
-    g.jwplayer = function() { return fakePlayer; };
-    g.jwplayer.key = '';
-
-    g.Hls = function() {};
-    g.Hls.isSupported = function() { return true; };
-    g.Hls.prototype = { loadSource: function(s) { capturedUrl = s; }, attachMedia: function() {} };
-
-    g.navigator = { userAgent: UA, platform: 'Win32' };
-    g.location = { href: 'https://x/', hostname: 'x', protocol: 'https:', origin: 'https://x', host: 'x', pathname: '/', search: '', hash: '' };
-    g.screen = { width: 1920, height: 1080, availWidth: 1920, availHeight: 1080 };
-
-    var jqMethods = ['on', 'off', 'fadeOut', 'fadeIn', 'removeClass', 'addClass', 'attr', 'css', 'html', 'text', 'val', 'show', 'hide', 'find', 'each', 'append', 'prepend', 'remove', 'click', 'ready', 'insertBefore'];
-    function jqFactory() {
-        var o = { length: 0 };
-        for (var i = 0; i < jqMethods.length; i++) {
-            (function(m) {
-                o[m] = function(fn) {
-                    if (typeof fn === 'function' && m === 'ready') try { fn(); } catch (e) {}
-                    return o;
-                };
-            })(jqMethods[i]);
-        }
-        return o;
-    }
-    g.$ = jqFactory;
-    g.jQuery = jqFactory;
-    g.XMLHttpRequest = function() {
-        return { open: function() {}, send: function() {}, setRequestHeader: function() {}, addEventListener: function() {}, readyState: 4, status: 200, responseText: '{}' };
-    };
-
-    try {
-        (0, eval)(scriptContent);
-    } catch (e) {
-        console.log('[FaselHD] Script exec error: ' + e.message);
-    }
-
-    for (var k2 = 0; k2 < STUB_KEYS.length; k2++) {
-        var key2 = STUB_KEYS[k2];
-        if (key2 in saved) {
-            g[key2] = saved[key2];
-        } else {
-            delete g[key2];
+            var quality = detectQuality(variantUrl, height, width);
+            variants.push({ url: variantUrl, quality: quality, height: height, bandwidth: bw });
         }
     }
 
-    return { url: capturedUrl, config: capturedConfig };
+    return variants;
 }
 
 // ── Extract streams from a single player token ────────────────────────
 
 async function extractStreamsFromToken(token, hostname) {
     var playerUrl = 'https://' + hostname + '/video_player?player_token=' + encodeURIComponent(token);
+    console.log('[FaselHD] Fetching player: ' + playerUrl.substring(0, 80) + '...');
+
     var html = await fetchText(playerUrl, {
         'Referer': 'https://' + hostname + '/',
         'Accept': 'text/html,application/xhtml+xml,*/*',
     });
-    if (!html) return [];
+    if (!html) { console.log('[FaselHD] Player page empty'); return []; }
+    console.log('[FaselHD] Player HTML: ' + html.length + ' chars');
 
-    var scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
-    var sm;
+    // POST the HTML to the backend for VM sandbox extraction
+    var extractResponse;
+    try {
+        extractResponse = await safeFetch(EXTRACT_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'text/html',
+            },
+            body: html,
+        }, 15000);
+    } catch (e) {
+        console.log('[FaselHD] Extract POST failed: ' + e.message);
+        return [];
+    }
+
+    if (!extractResponse.ok) {
+        console.log('[FaselHD] Extract returned ' + extractResponse.status);
+        return [];
+    }
+
+    var extractData;
+    try {
+        extractData = await extractResponse.json();
+    } catch (e) {
+        console.log('[FaselHD] Extract JSON parse failed');
+        return [];
+    }
+
+    if (!extractData.streams || !extractData.streams.length) {
+        console.log('[FaselHD] No streams from extract: ' + (extractData.error || 'unknown'));
+        return [];
+    }
+
+    console.log('[FaselHD] Backend returned ' + extractData.streams.length + ' stream(s)');
+
+    // For each returned stream, check if it's a master m3u8 and try to parse quality variants
     var results = [];
+    for (var i = 0; i < extractData.streams.length; i++) {
+        var stream = extractData.streams[i];
+        if (!stream.url) continue;
 
-    while ((sm = scriptRe.exec(html)) !== null) {
-        var sc = sm[1].trim();
-        if (sc.length < 1000 || sc.indexOf('_0x') === -1) continue;
+        // If it's a master m3u8, fetch it and parse quality variants
+        if (stream.url.indexOf('master.m3u8') !== -1 || stream.url.indexOf('master.') !== -1) {
+            console.log('[FaselHD] Fetching master m3u8 for qualities...');
+            var m3u8Text = await fetchText(stream.url, {
+                'Referer': 'https://' + hostname + '/',
+                'Origin': 'https://' + hostname,
+            });
 
-        var result = executePlayerScript(sc);
-
-        if (result.url && result.url.indexOf('scdns') !== -1) {
-            console.log('[FaselHD] Captured: ' + result.url.substring(0, 100));
-            var quality = 'auto';
-            if (/1080/.test(result.url)) quality = '1080p';
-            else if (/720/.test(result.url)) quality = '720p';
-            else if (/480/.test(result.url)) quality = '480p';
-            else if (/360/.test(result.url)) quality = '480p';
-            results.push({ url: result.url, quality: quality });
-        }
-
-        if (result.config) {
-            var sources = result.config.sources || [];
-            if (result.config.playlist) {
-                for (var p = 0; p < result.config.playlist.length; p++) {
-                    var pl = result.config.playlist[p];
-                    if (pl.sources) sources = sources.concat(pl.sources);
-                    if (pl.file) sources.push({ file: pl.file, label: pl.label || 'auto' });
+            if (m3u8Text && m3u8Text.indexOf('#EXTM3U') !== -1 && m3u8Text.indexOf('#EXT-X-STREAM-INF') !== -1) {
+                var variants = parseM3u8Qualities(stream.url, m3u8Text);
+                if (variants.length > 0) {
+                    console.log('[FaselHD] Found ' + variants.length + ' quality variants');
+                    // Sort by height descending
+                    variants.sort(function(a, b) { return b.height - a.height; });
+                    for (var v = 0; v < variants.length; v++) {
+                        results.push({ url: variants[v].url, quality: variants[v].quality });
+                    }
+                    continue;
                 }
             }
-            for (var s = 0; s < sources.length; s++) {
-                var fileUrl = sources[s].file || sources[s].src || '';
-                if (!fileUrl) continue;
-                console.log('[FaselHD] JWP: ' + fileUrl.substring(0, 100));
-                results.push({ url: fileUrl, quality: 'auto', isMaster: true });
-            }
+            // If master m3u8 parsing failed, just use master URL as-is
+            console.log('[FaselHD] Using master m3u8 directly');
         }
+
+        results.push({ url: stream.url, quality: stream.quality || 'auto' });
     }
 
     return results;
@@ -369,7 +338,7 @@ async function resolveStreams(mediaType, tmdbId, season, episode) {
         var streams = await extractStreamsFromToken(tokenResult.tokens[i], tokenResult.hostname);
         if (streams.length > 0) {
             rawStreams = rawStreams.concat(streams);
-            if (streams.some(function(s) { return s.isMaster; })) break;
+            break; // Got streams from first working token
         }
     }
     console.log('[FaselHD] Extract in ' + (Date.now() - t0) + 'ms');
