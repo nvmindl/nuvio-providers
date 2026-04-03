@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-04-03T20:29:16.331Z
+ * Generated: 2026-04-03T20:38:23.176Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -31,7 +31,8 @@ var ANILIST_URL = "https://graphql.anilist.co";
 var AC_API = "https://khkhkhkh.com/animecp/animeapi65/";
 var RNC_PASSWORD = "anime5w&f4H&434*";
 var UA = "AnimeCloud/6.5 CFNetwork/1399 Darwin/22.1.0";
-var FETCH_TIMEOUT = 1e4;
+var FETCH_TIMEOUT = 12e3;
+var FETCH_TIMEOUT_LONG = 25e3;
 function fetchWithTimeout(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
   return new Promise(function(resolve, reject) {
@@ -47,7 +48,7 @@ function fetchWithTimeout(url, options, timeout) {
     });
   });
 }
-function acPost(command, params) {
+function acPost(command, params, timeout) {
   return __async(this, null, function* () {
     var body = "command=" + encodeURIComponent(command);
     if (params) {
@@ -64,7 +65,7 @@ function acPost(command, params) {
           "User-Agent": UA
         },
         body
-      });
+      }, timeout || FETCH_TIMEOUT);
       if (!response.ok)
         return null;
       var text = yield response.text();
@@ -285,7 +286,7 @@ function getAnimeList() {
     if (animeListCache && now - animeListCacheTime < CACHE_TTL) {
       return animeListCache;
     }
-    var data = yield acPost("getAllAnime");
+    var data = yield acPost("getAllAnime", null, FETCH_TIMEOUT_LONG);
     if (!data || !data.result)
       return [];
     var raw = data.result;
@@ -602,7 +603,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         return [];
       }
       console.log("[AnimeCloud] Matched: " + matchedAnime.name + " (ID: " + matchedAnime.id + ")");
-      var details = yield acPost("getAnimeDetails", { animeID: matchedAnime.id });
+      var details = yield acPost("getAnimeDetails", { animeID: matchedAnime.id }, FETCH_TIMEOUT_LONG);
       if (!details || !details.result) {
         console.log("[AnimeCloud] Failed to get episode list");
         return [];
@@ -643,7 +644,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
           });
           var remaining = offsetEp;
           for (var ci = 0; ci < continuations.length; ci++) {
-            var contDetails = yield acPost("getAnimeDetails", { animeID: continuations[ci].id });
+            var contDetails = yield acPost("getAnimeDetails", { animeID: continuations[ci].id }, FETCH_TIMEOUT_LONG);
             if (!contDetails || !contDetails.result)
               continue;
             var contEps = contDetails.result;

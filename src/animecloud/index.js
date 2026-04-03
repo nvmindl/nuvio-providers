@@ -1,12 +1,10 @@
-// AnimeCloud Nuvio Provider v2.5.0
+// AnimeCloud Nuvio Provider v2.6.0
 // Direct API integration — no backend required.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
-// v2.5.0: Speed optimization — try-match-first pattern
-//   - Match with TMDB titles immediately, only wait for AniList if weak match (<80)
-//   - AniList fires in background from the start but is not awaited unless needed
-//   - Saves 2-4s on most lookups (eliminates AniList round-trip wait)
-//   - Fixed type safety: parseInt on season/episode at entry point
-//   - All previous v2.4.0 optimizations retained
+// v2.6.0: Increased timeout for long-running anime (One Piece 1174 eps = 310KB payload)
+//   - getAnimeDetails uses 25s timeout (was 10s — too short for One Piece on mobile)
+//   - getAllAnime uses 20s timeout (2442 entries)
+//   - Other fetches remain at 12s
 
 var CryptoJS = require('crypto-js');
 
@@ -17,7 +15,8 @@ var AC_API = 'https://khkhkhkh.com/animecp/animeapi65/';
 var RNC_PASSWORD = 'anime5w\x26f4H\x26434*';
 
 var UA = 'AnimeCloud/6.5 CFNetwork/1399 Darwin/22.1.0';
-var FETCH_TIMEOUT = 10000; // 10s timeout — prevents indefinite hangs on TVs
+var FETCH_TIMEOUT = 12000; // 12s default timeout
+var FETCH_TIMEOUT_LONG = 25000; // 25s for large payloads (One Piece = 310KB, 1174 episodes)
 
 // ── Timeout wrapper ────────────────────────────────────────────────────
 
@@ -40,7 +39,7 @@ function fetchWithTimeout(url, options, timeout) {
 
 // ── AnimeCloud API helper ──────────────────────────────────────────────
 
-async function acPost(command, params) {
+async function acPost(command, params, timeout) {
     var body = 'command=' + encodeURIComponent(command);
     if (params) {
         var keys = Object.keys(params);
@@ -57,7 +56,7 @@ async function acPost(command, params) {
                 'User-Agent': UA,
             },
             body: body,
-        });
+        }, timeout || FETCH_TIMEOUT);
 
         if (!response.ok) return null;
 
@@ -296,7 +295,7 @@ async function getAnimeList() {
         return animeListCache;
     }
 
-    var data = await acPost('getAllAnime');
+    var data = await acPost('getAllAnime', null, FETCH_TIMEOUT_LONG);
     if (!data || !data.result) return [];
 
     // Strip to only id/name/year — saves ~72% memory (612KB → 169KB for 2434 entries)
@@ -662,7 +661,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         console.log('[AnimeCloud] Matched: ' + matchedAnime.name + ' (ID: ' + matchedAnime.id + ')');
 
         // Step 3: Get episode list (single fetch)
-        var details = await acPost('getAnimeDetails', { animeID: matchedAnime.id });
+        var details = await acPost('getAnimeDetails', { animeID: matchedAnime.id }, FETCH_TIMEOUT_LONG);
         if (!details || !details.result) {
             console.log('[AnimeCloud] Failed to get episode list');
             return [];
@@ -706,7 +705,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 });
                 var remaining = offsetEp;
                 for (var ci = 0; ci < continuations.length; ci++) {
-                    var contDetails = await acPost('getAnimeDetails', { animeID: continuations[ci].id });
+                    var contDetails = await acPost('getAnimeDetails', { animeID: continuations[ci].id }, FETCH_TIMEOUT_LONG);
                     if (!contDetails || !contDetails.result) continue;
                     var contEps = contDetails.result;
                     console.log('[AnimeCloud] Checking continuation: ' + continuations[ci].name + ' (' + contEps.length + ' eps), need ep ' + remaining);
