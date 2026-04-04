@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-04-03T20:38:23.176Z
+ * Generated: 2026-04-04T01:30:26.953Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -24,7 +24,12 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/animecloud/index.js
-var CryptoJS = require("crypto-js");
+var CryptoJS = null;
+try {
+  CryptoJS = require("crypto-js");
+} catch (e) {
+  console.log("[AnimeCloud] crypto-js not available: " + e.message);
+}
 var TMDB_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_BASE = "https://api.themoviedb.org/3";
 var ANILIST_URL = "https://graphql.anilist.co";
@@ -33,6 +38,7 @@ var RNC_PASSWORD = "anime5w&f4H&434*";
 var UA = "AnimeCloud/6.5 CFNetwork/1399 Darwin/22.1.0";
 var FETCH_TIMEOUT = 12e3;
 var FETCH_TIMEOUT_LONG = 25e3;
+var DECRYPT_BACKEND = "http://145.241.158.129:3112/animecloud/video";
 function fetchWithTimeout(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
   return new Promise(function(resolve, reject) {
@@ -83,6 +89,10 @@ function acPost(command, params, timeout) {
   });
 }
 function decryptRNCryptor(base64Data) {
+  if (!CryptoJS) {
+    console.log("[AnimeCloud] Cannot decrypt \u2014 crypto-js not loaded");
+    return null;
+  }
   var raw = CryptoJS.enc.Base64.parse(base64Data);
   var rawBytes = wordArrayToBytes(raw);
   if (rawBytes.length < 66)
@@ -526,29 +536,53 @@ function getVideoURLs(epID) {
 }
 function fetchVideoURL(epID, quality) {
   return __async(this, null, function* () {
+    if (CryptoJS) {
+      try {
+        var response = yield fetchWithTimeout(AC_API, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": UA
+          },
+          body: "command=getVideoURL&epID=" + epID + "&quality=" + quality
+        });
+        if (!response.ok)
+          return null;
+        var text = yield response.text();
+        if (!text || text.length === 0)
+          return null;
+        var decrypted = decryptRNCryptor(text);
+        if (!decrypted)
+          return null;
+        var data = JSON.parse(decrypted);
+        if (!data.result || data.result.length === 0)
+          return null;
+        return { url: data.result[0].url, note: data.result[0].note || "" };
+      } catch (e) {
+        console.log("[AnimeCloud] fetchVideoURL local error (q=" + quality + "): " + e.message);
+        return null;
+      }
+    }
     try {
-      var response = yield fetchWithTimeout(AC_API, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": UA
-        },
-        body: "command=getVideoURL&epID=" + epID + "&quality=" + quality
+      console.log("[AnimeCloud] Using backend decrypt for epID=" + epID + " q=" + quality);
+      var backendUrl = DECRYPT_BACKEND + "?epID=" + epID + "&quality=" + quality;
+      var response = yield fetchWithTimeout(backendUrl, {
+        headers: { "Accept": "application/json" }
       });
-      if (!response.ok)
+      if (!response.ok) {
+        console.log("[AnimeCloud] Backend returned " + response.status);
         return null;
-      var text = yield response.text();
-      if (!text || text.length === 0)
+      }
+      var data = yield response.json();
+      if (data.error) {
+        console.log("[AnimeCloud] Backend error: " + data.error);
         return null;
-      var decrypted = decryptRNCryptor(text);
-      if (!decrypted)
+      }
+      if (!data.url)
         return null;
-      var data = JSON.parse(decrypted);
-      if (!data.result || data.result.length === 0)
-        return null;
-      return { url: data.result[0].url, note: data.result[0].note || "" };
+      return { url: data.url, note: data.note || "" };
     } catch (e) {
-      console.log("[AnimeCloud] fetchVideoURL error (q=" + quality + "): " + e.message);
+      console.log("[AnimeCloud] fetchVideoURL backend error (q=" + quality + "): " + e.message);
       return null;
     }
   });

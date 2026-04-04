@@ -1,12 +1,17 @@
-// AnimeCloud Nuvio Provider v2.6.0
-// Direct API integration — no backend required.
+// AnimeCloud Nuvio Provider v2.7.0
+// Direct API integration with server-side fallback for TV compatibility.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
+// v2.7.0: Server-side decryption fallback for TV (crypto-js unavailable on smart TV runtime)
+//   - Phone: decrypts locally via crypto-js (fast, no extra network hop)
+//   - TV: calls backend at 145.241.158.129:3112/animecloud/video (Node.js native crypto)
 // v2.6.0: Increased timeout for long-running anime (One Piece 1174 eps = 310KB payload)
-//   - getAnimeDetails uses 25s timeout (was 10s — too short for One Piece on mobile)
-//   - getAllAnime uses 20s timeout (2442 entries)
-//   - Other fetches remain at 12s
 
-var CryptoJS = require('crypto-js');
+var CryptoJS = null;
+try {
+    CryptoJS = require('crypto-js');
+} catch (e) {
+    console.log('[AnimeCloud] crypto-js not available: ' + e.message);
+}
 
 var TMDB_KEY = '439c478a771f35c05022f9feabcca01c';
 var TMDB_BASE = 'https://api.themoviedb.org/3';
@@ -17,6 +22,7 @@ var RNC_PASSWORD = 'anime5w\x26f4H\x26434*';
 var UA = 'AnimeCloud/6.5 CFNetwork/1399 Darwin/22.1.0';
 var FETCH_TIMEOUT = 12000; // 12s default timeout
 var FETCH_TIMEOUT_LONG = 25000; // 25s for large payloads (One Piece = 310KB, 1174 episodes)
+var DECRYPT_BACKEND = 'http://145.241.158.129:3112/animecloud/video';
 
 // ── Timeout wrapper ────────────────────────────────────────────────────
 
@@ -77,6 +83,10 @@ async function acPost(command, params, timeout) {
 // ── RNCryptor v3 Decryption ────────────────────────────────────────────
 
 function decryptRNCryptor(base64Data) {
+    if (!CryptoJS) {
+        console.log('[AnimeCloud] Cannot decrypt — crypto-js not loaded');
+        return null;
+    }
     var raw = CryptoJS.enc.Base64.parse(base64Data);
     var rawBytes = wordArrayToBytes(raw);
 
@@ -569,30 +579,59 @@ async function getVideoURLs(epID) {
 }
 
 async function fetchVideoURL(epID, quality) {
+    // Path 1: Local decryption via crypto-js (phone — fast, no network hop)
+    if (CryptoJS) {
+        try {
+            var response = await fetchWithTimeout(AC_API, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': UA,
+                },
+                body: 'command=getVideoURL&epID=' + epID + '&quality=' + quality,
+            });
+
+            if (!response.ok) return null;
+
+            var text = await response.text();
+            if (!text || text.length === 0) return null;
+
+            var decrypted = decryptRNCryptor(text);
+            if (!decrypted) return null;
+
+            var data = JSON.parse(decrypted);
+            if (!data.result || data.result.length === 0) return null;
+
+            return { url: data.result[0].url, note: data.result[0].note || '' };
+        } catch (e) {
+            console.log('[AnimeCloud] fetchVideoURL local error (q=' + quality + '): ' + e.message);
+            return null;
+        }
+    }
+
+    // Path 2: Server-side decryption fallback (TV — crypto-js unavailable)
     try {
-        var response = await fetchWithTimeout(AC_API, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'User-Agent': UA,
-            },
-            body: 'command=getVideoURL&epID=' + epID + '&quality=' + quality,
+        console.log('[AnimeCloud] Using backend decrypt for epID=' + epID + ' q=' + quality);
+        var backendUrl = DECRYPT_BACKEND + '?epID=' + epID + '&quality=' + quality;
+        var response = await fetchWithTimeout(backendUrl, {
+            headers: { 'Accept': 'application/json' },
         });
 
-        if (!response.ok) return null;
+        if (!response.ok) {
+            console.log('[AnimeCloud] Backend returned ' + response.status);
+            return null;
+        }
 
-        var text = await response.text();
-        if (!text || text.length === 0) return null;
+        var data = await response.json();
+        if (data.error) {
+            console.log('[AnimeCloud] Backend error: ' + data.error);
+            return null;
+        }
+        if (!data.url) return null;
 
-        var decrypted = decryptRNCryptor(text);
-        if (!decrypted) return null;
-
-        var data = JSON.parse(decrypted);
-        if (!data.result || data.result.length === 0) return null;
-
-        return { url: data.result[0].url, note: data.result[0].note || '' };
+        return { url: data.url, note: data.note || '' };
     } catch (e) {
-        console.log('[AnimeCloud] fetchVideoURL error (q=' + quality + '): ' + e.message);
+        console.log('[AnimeCloud] fetchVideoURL backend error (q=' + quality + '): ' + e.message);
         return null;
     }
 }
