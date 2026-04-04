@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-04-04T01:30:26.953Z
+ * Generated: 2026-04-04T01:38:20.137Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -26,10 +26,16 @@ var __async = (__this, __arguments, generator) => {
 // src/animecloud/index.js
 var CryptoJS = null;
 try {
-  CryptoJS = require("crypto-js");
+  _cjs = require("crypto-js");
+  if (_cjs && _cjs.enc && _cjs.enc.Base64 && _cjs.AES && _cjs.PBKDF2) {
+    CryptoJS = _cjs;
+  } else {
+    console.log("[AnimeCloud] crypto-js loaded but incomplete \u2014 using backend fallback");
+  }
 } catch (e) {
   console.log("[AnimeCloud] crypto-js not available: " + e.message);
 }
+var _cjs;
 var TMDB_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_BASE = "https://api.themoviedb.org/3";
 var ANILIST_URL = "https://graphql.anilist.co";

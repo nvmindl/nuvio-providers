@@ -1,14 +1,19 @@
-// AnimeCloud Nuvio Provider v2.7.0
+// AnimeCloud Nuvio Provider v2.7.1
 // Direct API integration with server-side fallback for TV compatibility.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
+// v2.7.1: Fix TV detection — crypto-js may return empty object instead of throwing
+//   - Now validates crypto-js has required methods (enc.Base64, AES, PBKDF2)
 // v2.7.0: Server-side decryption fallback for TV (crypto-js unavailable on smart TV runtime)
-//   - Phone: decrypts locally via crypto-js (fast, no extra network hop)
-//   - TV: calls backend at 145.241.158.129:3112/animecloud/video (Node.js native crypto)
-// v2.6.0: Increased timeout for long-running anime (One Piece 1174 eps = 310KB payload)
 
 var CryptoJS = null;
 try {
-    CryptoJS = require('crypto-js');
+    var _cjs = require('crypto-js');
+    // Verify crypto-js is functional (TV runtime may return empty/broken object)
+    if (_cjs && _cjs.enc && _cjs.enc.Base64 && _cjs.AES && _cjs.PBKDF2) {
+        CryptoJS = _cjs;
+    } else {
+        console.log('[AnimeCloud] crypto-js loaded but incomplete — using backend fallback');
+    }
 } catch (e) {
     console.log('[AnimeCloud] crypto-js not available: ' + e.message);
 }
