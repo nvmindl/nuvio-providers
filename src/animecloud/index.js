@@ -1,8 +1,8 @@
-// AnimeCloud Nuvio Provider v2.7.1
+// AnimeCloud Nuvio Provider v2.7.2
 // Direct API integration with server-side fallback for TV compatibility.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
+// v2.7.2: Rewrite fetchWithTimeout to use AbortController (like Cineby) — setTimeout unreliable on TV
 // v2.7.1: Fix TV detection — crypto-js may return empty object instead of throwing
-//   - Now validates crypto-js has required methods (enc.Base64, AES, PBKDF2)
 // v2.7.0: Server-side decryption fallback for TV (crypto-js unavailable on smart TV runtime)
 
 var CryptoJS = null;
@@ -29,23 +29,21 @@ var FETCH_TIMEOUT = 12000; // 12s default timeout
 var FETCH_TIMEOUT_LONG = 25000; // 25s for large payloads (One Piece = 310KB, 1174 episodes)
 var DECRYPT_BACKEND = 'http://145.241.158.129:3112/animecloud/video';
 
-// ── Timeout wrapper ────────────────────────────────────────────────────
+// ── Timeout wrapper (AbortController-based, like Cineby — setTimeout unreliable on TV) ──
 
 function fetchWithTimeout(url, options, timeout) {
     var ms = timeout || FETCH_TIMEOUT;
-    return new Promise(function(resolve, reject) {
-        var timer = setTimeout(function() {
-            reject(new Error('Fetch timeout after ' + ms + 'ms'));
-        }, ms);
-
-        fetch(url, options).then(function(response) {
-            clearTimeout(timer);
-            resolve(response);
-        }).catch(function(err) {
-            clearTimeout(timer);
-            reject(err);
-        });
-    });
+    var controller;
+    var tid;
+    try {
+        controller = new AbortController();
+        tid = setTimeout(function() { controller.abort(); }, ms);
+    } catch (e) { controller = null; }
+    var opts = Object.assign({ method: 'GET' }, options || {});
+    if (controller) opts.signal = controller.signal;
+    return fetch(url, opts)
+        .then(function(r) { if (tid) clearTimeout(tid); return r; })
+        .catch(function(e) { if (tid) clearTimeout(tid); throw e; });
 }
 
 // ── AnimeCloud API helper ──────────────────────────────────────────────

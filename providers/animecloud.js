@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-04-04T01:38:20.137Z
+ * Generated: 2026-04-05T11:58:50.871Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -47,17 +47,27 @@ var FETCH_TIMEOUT_LONG = 25e3;
 var DECRYPT_BACKEND = "http://145.241.158.129:3112/animecloud/video";
 function fetchWithTimeout(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
-  return new Promise(function(resolve, reject) {
-    var timer = setTimeout(function() {
-      reject(new Error("Fetch timeout after " + ms + "ms"));
+  var controller;
+  var tid;
+  try {
+    controller = new AbortController();
+    tid = setTimeout(function() {
+      controller.abort();
     }, ms);
-    fetch(url, options).then(function(response) {
-      clearTimeout(timer);
-      resolve(response);
-    }).catch(function(err) {
-      clearTimeout(timer);
-      reject(err);
-    });
+  } catch (e) {
+    controller = null;
+  }
+  var opts = Object.assign({ method: "GET" }, options || {});
+  if (controller)
+    opts.signal = controller.signal;
+  return fetch(url, opts).then(function(r) {
+    if (tid)
+      clearTimeout(tid);
+    return r;
+  }).catch(function(e) {
+    if (tid)
+      clearTimeout(tid);
+    throw e;
   });
 }
 function acPost(command, params, timeout) {
