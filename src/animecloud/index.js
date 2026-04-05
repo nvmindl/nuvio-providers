@@ -1,7 +1,10 @@
-// AnimeCloud Nuvio Provider v2.9.1
+// AnimeCloud Nuvio Provider v2.9.2
 // Direct API integration with full server-side fallback for TV compatibility.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
-// v2.9.0: Full server-side pipeline fallback — if AC API (khkhkhkh.com) is unreachable
+// v2.9.2: Fix multi-part anime wrong episode (e.g. JoJo S4=Golden Wind not Diamond).
+//         matchAnime() now uses TMDB season air year as proximity tiebreaker so
+//         TMDB season numbers (which don't map 1:1 to Japanese Part numbers) resolve correctly.
+// v2.9.1: quality 'auto'→'1080p'/'480p', name fixed, size ''
 //         (TV network blocks it), call /animecloud/streams backend which runs entire
 //         pipeline (TMDB lookup, anime matching, episode find, decrypt) on Oracle VM.
 //         Local path still tried first for phone users (fast, no network hop to backend).
@@ -190,11 +193,13 @@ async function getTmdbDetails(tmdbId, mediaType, season) {
     if (dateStr) year = parseInt(dateStr.split('-')[0], 10);
 
     var seasonName = null;
+    var seasonYear = null;
     if (data.seasons && season) {
         var seasonInt = parseInt(season, 10);
         for (var i = 0; i < data.seasons.length; i++) {
             if (data.seasons[i].season_number === seasonInt) {
                 seasonName = data.seasons[i].name;
+                if (data.seasons[i].air_date) seasonYear = parseInt(data.seasons[i].air_date.split('-')[0], 10);
                 break;
             }
         }
@@ -217,6 +222,7 @@ async function getTmdbDetails(tmdbId, mediaType, season) {
         titles: unique,
         year: year,
         seasonName: seasonName,
+        seasonYear: seasonYear,
         seasonEpCounts: seasonEpCounts,
         totalSeasons: data.number_of_seasons || 1,
     };
@@ -412,7 +418,7 @@ function isMovie(name) {
 // No pre-fetch episode count phase — that was the biggest perf killer
 // (5 parallel getAnimeDetails calls BEFORE even matching).
 
-function matchAnime(animeList, searchTitles, targetSeason, seasonName) {
+function matchAnime(animeList, searchTitles, targetSeason, seasonName, seasonYear) {
     var candidates = [];
     var franchiseCandidates = [];
 
@@ -482,8 +488,10 @@ function matchAnime(animeList, searchTitles, targetSeason, seasonName) {
             return bestSnMatch.anime;
         }
 
-        // Strategy 2: Franchise index by year (JoJo S4 → 4th entry sorted by year)
-        if (franchiseCandidates.length > 1 && targetSeason > 1) {
+        // Strategy 2: Year-proximity match — TMDB season air year vs AC entry year.
+        // Handles cases where AC uses Japanese titles (e.g. "Ougon no Kaze" != "Golden Wind")
+        // and TMDB season numbers don't map 1:1 to Japanese Part numbers.
+        if (franchiseCandidates.length > 1 && targetSeason > 1 && seasonYear) {
             var tvFranchise = [];
             for (var i = 0; i < franchiseCandidates.length; i++) {
                 if (!isMovie(franchiseCandidates[i].name)) {
@@ -491,18 +499,43 @@ function matchAnime(animeList, searchTitles, targetSeason, seasonName) {
                 }
             }
             if (tvFranchise.length > 1) {
-                tvFranchise.sort(function(a, b) {
-                    var ya = parseInt(a.anime.year) || 9999;
-                    var yb = parseInt(b.anime.year) || 9999;
-                    if (ya !== yb) return ya - yb;
-                    return a.season - b.season;
-                });
-                var idx = targetSeason - 1;
-                if (idx >= 0 && idx < tvFranchise.length) {
-                    console.log('[AnimeCloud] Franchise index match: S' + targetSeason + ' -> ' + tvFranchise[idx].name);
-                    tvFranchise[idx].anime._bestScore = tvFranchise[idx].tScore;
-                    return tvFranchise[idx].anime;
+                var bestYearDiff = Infinity;
+                var bestYearMatch = null;
+                for (var i = 0; i < tvFranchise.length; i++) {
+                    var entryYear = parseInt(tvFranchise[i].anime.year) || 0;
+                    if (!entryYear) continue;
+                    var diff = Math.abs(entryYear - seasonYear);
+                    if (diff < bestYearDiff) {
+                        bestYearDiff = diff;
+                        bestYearMatch = tvFranchise[i];
+                    }
                 }
+                if (bestYearMatch && bestYearDiff <= 1) {
+                    console.log('[AnimeCloud] Year-proximity match: S' + targetSeason + ' (year ' + seasonYear + ') -> ' + bestYearMatch.name + ' (' + bestYearMatch.anime.year + ')');
+                    bestYearMatch.anime._bestScore = bestYearMatch.tScore;
+                    return bestYearMatch.anime;
+                }
+            }
+        }
+    }
+
+    // Phase B: Year-proximity fallback outside season-name block (covers cases where
+    // useSeasonName is false but we still have multiple franchise entries)
+    if (seasonYear && targetSeason > 1) {
+        var franchiseAll = candidates.filter(function(c) { return c.tScore >= 50 && !isMovie(c.name); });
+        if (franchiseAll.length > 1) {
+            var bestYD = Infinity;
+            var bestYM = null;
+            for (var i = 0; i < franchiseAll.length; i++) {
+                var ey = parseInt(franchiseAll[i].anime.year) || 0;
+                if (!ey) continue;
+                var d = Math.abs(ey - seasonYear);
+                if (d < bestYD) { bestYD = d; bestYM = franchiseAll[i]; }
+            }
+            if (bestYM && bestYD <= 1) {
+                console.log('[AnimeCloud] Year-proximity fallback: S' + targetSeason + ' (year ' + seasonYear + ') -> ' + bestYM.name + ' (' + bestYM.anime.year + ')');
+                bestYM.anime._bestScore = bestYM.tScore;
+                return bestYM.anime;
             }
         }
     }
@@ -711,7 +744,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         console.log('[AnimeCloud] Anime catalog: ' + animeList.length + ' entries');
 
         // Step 2: Try matching with TMDB titles FIRST (no AniList wait)
-        var matchedAnime = matchAnime(animeList, tmdb.titles, seasonNum, isTV ? tmdb.seasonName : null);
+        var matchedAnime = matchAnime(animeList, tmdb.titles, seasonNum, isTV ? tmdb.seasonName : null, isTV ? tmdb.seasonYear : null);
 
         // If weak match (<80) or no match, wait for AniList and retry
         if (!matchedAnime || (matchedAnime._bestScore && matchedAnime._bestScore < 80)) {
@@ -727,7 +760,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                     var lower = allTitles[i].toLowerCase().trim();
                     if (!seen[lower]) { seen[lower] = true; combined.push(allTitles[i]); }
                 }
-                var retryMatch = matchAnime(animeList, combined, seasonNum, isTV ? tmdb.seasonName : null);
+                var retryMatch = matchAnime(animeList, combined, seasonNum, isTV ? tmdb.seasonName : null, isTV ? tmdb.seasonYear : null);
                 if (retryMatch) matchedAnime = retryMatch;
             }
         } else {
