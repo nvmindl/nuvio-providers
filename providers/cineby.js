@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-05T15:39:00.169Z
+ * Generated: 2026-04-05T15:56:21.268Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -61,7 +61,7 @@ function safeFetch(url, opts, ms) {
     throw e;
   });
 }
-function getTmdbMeta(mediaType, tmdbId) {
+function getTmdbMeta(mediaType, tmdbId, season) {
   return __async(this, null, function* () {
     var url = VIDEASY_DB + "/" + mediaType + "/" + tmdbId + "?append_to_response=external_ids,genres";
     var resp = yield safeFetch(url);
@@ -83,7 +83,17 @@ function getTmdbMeta(mediaType, tmdbId) {
     var isAnimation = genres.indexOf(16) !== -1;
     var isJapanese = data.original_language === "ja";
     isAnime = mediaType === "tv" && isAnimation && isJapanese;
-    return { title, year, imdbId, isAnime, originalTitle: data.original_name || data.original_title || "" };
+    var seasonName = null;
+    if (season && data.seasons) {
+      var seasonInt = parseInt(season, 10);
+      for (var i = 0; i < data.seasons.length; i++) {
+        if (data.seasons[i].season_number === seasonInt) {
+          seasonName = data.seasons[i].name;
+          break;
+        }
+      }
+    }
+    return { title, year, imdbId, isAnime, originalTitle: data.original_name || data.original_title || "", seasonName };
   });
 }
 function fetchEncrypted(serverEndpoint, params) {
@@ -132,7 +142,7 @@ function titleScore(a, b) {
     return 1;
   return hits / Math.max(wa.length, wb.length, 1);
 }
-function findHiAnimeId(title, originalTitle, year) {
+function findHiAnimeId(title, originalTitle, year, seasonName) {
   return __async(this, null, function* () {
     var queries = [title];
     if (originalTitle && normTitle(originalTitle) !== normTitle(title)) {
@@ -141,6 +151,7 @@ function findHiAnimeId(title, originalTitle, year) {
     var bestId = null;
     var bestScore = 0;
     var bestHasDub = false;
+    var allResults = [];
     for (var qi = 0; qi < queries.length; qi++) {
       var q = queries[qi];
       try {
@@ -158,6 +169,9 @@ function findHiAnimeId(title, originalTitle, year) {
             bestId = anime.id;
             bestHasDub = !!(anime.episodes && anime.episodes.dub);
           }
+          if (score >= 0.8) {
+            allResults.push(anime);
+          }
         }
         if (bestScore >= 0.8)
           break;
@@ -168,6 +182,37 @@ function findHiAnimeId(title, originalTitle, year) {
     if (bestScore < 0.4) {
       console.log("[Cineby/HiAnime] No match found (best score: " + bestScore.toFixed(2) + ")");
       return null;
+    }
+    if (seasonName && allResults.length > 1) {
+      var normSeason = normTitle(seasonName);
+      var seasonWords = normSeason.split(" ").filter(function(w2) {
+        return w2.length > 2;
+      });
+      if (seasonWords.length > 0) {
+        var bestSeasonScore = -1;
+        var bestSeasonId = null;
+        var bestSeasonHasDub = false;
+        for (var i = 0; i < allResults.length; i++) {
+          var anime = allResults[i];
+          var normName = normTitle(anime.name);
+          var hits = 0;
+          for (var w = 0; w < seasonWords.length; w++) {
+            if (normName.indexOf(seasonWords[w]) > -1)
+              hits++;
+          }
+          var snScore = hits / seasonWords.length;
+          var hasDub = !!(anime.episodes && anime.episodes.dub);
+          if (snScore > bestSeasonScore || snScore === bestSeasonScore && hasDub && !bestSeasonHasDub) {
+            bestSeasonScore = snScore;
+            bestSeasonId = anime.id;
+            bestSeasonHasDub = hasDub;
+          }
+        }
+        if (bestSeasonScore >= 0.5 && bestSeasonId) {
+          console.log('[Cineby/HiAnime] Season-name tiebreaker: "' + seasonName + '" -> ' + bestSeasonId);
+          return bestSeasonId;
+        }
+      }
     }
     console.log("[Cineby/HiAnime] Matched: " + bestId + " (score: " + bestScore.toFixed(2) + ")");
     return bestId;
@@ -196,12 +241,12 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var seasonId = String(parseInt(season, 10) || 1);
       var episodeId = String(parseInt(episode, 10) || 1);
       console.log("[Cineby] Fetching " + mType + " tmdb:" + tmdbId + (mType === "tv" ? " S" + seasonId + "E" + episodeId : ""));
-      var meta = yield getTmdbMeta(mType, tmdbId);
-      console.log("[Cineby] " + meta.title + " (" + meta.year + ")" + (meta.isAnime ? " [ANIME]" : ""));
+      var meta = yield getTmdbMeta(mType, tmdbId, mType === "tv" ? seasonId : null);
+      console.log("[Cineby] " + meta.title + " (" + meta.year + ")" + (meta.isAnime ? " [ANIME]" : "") + (meta.seasonName ? " [" + meta.seasonName + "]" : ""));
       if (meta.isAnime) {
         console.log("[Cineby] Using HiAnime path for anime");
         try {
-          var hiAnimeId = yield findHiAnimeId(meta.title, meta.originalTitle, meta.year);
+          var hiAnimeId = yield findHiAnimeId(meta.title, meta.originalTitle, meta.year, meta.seasonName);
           if (!hiAnimeId) {
             console.log("[Cineby] HiAnime: no match, falling back to TV path");
           } else {
