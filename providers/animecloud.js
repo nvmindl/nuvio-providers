@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-04-05T15:23:41.138Z
+ * Generated: 2026-04-05T15:39:00.081Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -767,11 +767,11 @@ function getStreams(tmdbId, mediaType, season, episode) {
       for (var i = 0; i < videoURLs.length; i++) {
         var v = videoURLs[i];
         streams.push({
-          name: "ANIMECLOUD - " + v.label,
+          name: "AnimeCloud " + v.label,
           title: "AnimeCloud " + v.label,
           url: v.url,
-          quality: v.quality,
-          size: "Unknown",
+          quality: v.label === "High" ? "1080p" : "480p",
+          size: "",
           headers: playHeaders,
           subtitles: [],
           provider: "animecloud"

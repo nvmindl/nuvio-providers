@@ -1,4 +1,4 @@
-// AnimeCloud Nuvio Provider v2.9.0
+// AnimeCloud Nuvio Provider v2.9.1
 // Direct API integration with full server-side fallback for TV compatibility.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
 // v2.9.0: Full server-side pipeline fallback — if AC API (khkhkhkh.com) is unreachable
@@ -832,11 +832,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         for (var i = 0; i < videoURLs.length; i++) {
             var v = videoURLs[i];
             streams.push({
-                name: 'ANIMECLOUD - ' + v.label,
+                name: 'AnimeCloud ' + v.label,
                 title: 'AnimeCloud ' + v.label,
                 url: v.url,
-                quality: v.quality,
-                size: 'Unknown',
+                quality: v.label === 'High' ? '1080p' : '480p',
+                size: '',
                 headers: playHeaders,
                 subtitles: [],
                 provider: 'animecloud',

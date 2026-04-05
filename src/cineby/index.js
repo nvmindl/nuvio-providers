@@ -1,13 +1,8 @@
-// Cineby v1.2.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
-// v1.1.0: Add HiAnime path for anime: detects Japanese animation via TMDB genres,
-//         searches anime-db.videasy.net for HiAnime ID, fetches separate Sub/Dub streams
-// v1.1.1: Fix titleScore() — containment-first scoring so short queries like "Kaiji"
-//         match long HiAnime titles like "Kaiji: Ultimate Survivor"
-// v1.2.0: Route HiAnime m3u8 URLs through backend proxy — fixes "web player" flash issue
-//         caused by .html segment paths in raw m3u8 (Cloudflare worker disguises TS as .html)
-// For movies/TV: fetches encrypted data (needs residential IP), Oracle backend decrypts
-// For anime: uses Videasy HiAnime API (plain JSON), segments proxied via backend
-// Backend: 145.241.158.129:3113
+// Cineby v1.2.1 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// v1.1.0: Add HiAnime path for anime
+// v1.1.1: Fix titleScore() containment-first scoring
+// v1.2.0: Route HiAnime m3u8 URLs through backend proxy (fixes web-player flash / .html segments)
+// v1.2.1: Fix stream display on TV — encode quality+dub/sub into name field, remove size 'Unknown'
 
 var BACKEND = 'http://145.241.158.129:3113';
 var VIDEASY_API = 'https://api.videasy.net';
@@ -247,16 +242,21 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                             var displayTitle = audioLabel ? res + ' - ' + audioLabel : res;
 
                             // Route through backend proxy to fix .html segment issue
-                            // Raw m3u8 from Cloudflare worker uses .html paths for TS segments
-                            // which causes players to open a web player instead of playing video
                             var proxyUrl = BACKEND + '/hianime-proxy?url=' + encodeURIComponent(src.url);
 
+                            // Build name with quality + audio label so TV displays it properly
+                            // TV renders: name (line1), title (line2), size (line3)
+                            // We put the key info in name so it's always visible
+                            var streamName = audioLabel
+                                ? 'Cineby HiAnime ' + res + ' ' + audioLabel
+                                : 'Cineby HiAnime ' + res;
+
                             streams.push({
-                                name: 'Cineby',
+                                name: streamName,
                                 title: displayTitle + ' [HiAnime]',
                                 url: proxyUrl,
                                 quality: res,
-                                size: 'Unknown',
+                                size: '',
                                 headers: {},
                                 subtitles: subs,
                                 provider: 'cineby',
@@ -353,7 +353,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 title: quality + serverTag,
                 url: src.url,
                 quality: quality,
-                size: 'Unknown',
+                size: '',
                 headers: {
                     'User-Agent': UA,
                     'Referer': 'https://www.vidking.net/',

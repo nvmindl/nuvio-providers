@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-05T15:23:41.052Z
+ * Generated: 2026-04-05T15:39:00.169Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -231,12 +231,13 @@ function getStreams(tmdbId, mediaType, season, episode) {
                 var audioLabel = qParts[1] || "";
                 var displayTitle = audioLabel ? res + " - " + audioLabel : res;
                 var proxyUrl = BACKEND + "/hianime-proxy?url=" + encodeURIComponent(src.url);
+                var streamName = audioLabel ? "Cineby HiAnime " + res + " " + audioLabel : "Cineby HiAnime " + res;
                 streams.push({
-                  name: "Cineby",
+                  name: streamName,
                   title: displayTitle + " [HiAnime]",
                   url: proxyUrl,
                   quality: res,
-                  size: "Unknown",
+                  size: "",
                   headers: {},
                   subtitles: subs,
                   provider: "cineby"
@@ -318,7 +319,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
           title: quality + serverTag,
           url: src.url,
           quality,
-          size: "Unknown",
+          size: "",
           headers: {
             "User-Agent": UA,
             "Referer": "https://www.vidking.net/",
