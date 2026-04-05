@@ -1,10 +1,12 @@
-// Cineby v1.1.1 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// Cineby v1.2.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
 // v1.1.0: Add HiAnime path for anime: detects Japanese animation via TMDB genres,
 //         searches anime-db.videasy.net for HiAnime ID, fetches separate Sub/Dub streams
 // v1.1.1: Fix titleScore() — containment-first scoring so short queries like "Kaiji"
 //         match long HiAnime titles like "Kaiji: Ultimate Survivor"
+// v1.2.0: Route HiAnime m3u8 URLs through backend proxy — fixes "web player" flash issue
+//         caused by .html segment paths in raw m3u8 (Cloudflare worker disguises TS as .html)
 // For movies/TV: fetches encrypted data (needs residential IP), Oracle backend decrypts
-// For anime: uses Videasy HiAnime API (plain JSON, no decryption needed)
+// For anime: uses Videasy HiAnime API (plain JSON), segments proxied via backend
 // Backend: 145.241.158.129:3113
 
 var BACKEND = 'http://145.241.158.129:3113';
@@ -244,17 +246,18 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                             var audioLabel = qParts[1] || '';
                             var displayTitle = audioLabel ? res + ' - ' + audioLabel : res;
 
+                            // Route through backend proxy to fix .html segment issue
+                            // Raw m3u8 from Cloudflare worker uses .html paths for TS segments
+                            // which causes players to open a web player instead of playing video
+                            var proxyUrl = BACKEND + '/hianime-proxy?url=' + encodeURIComponent(src.url);
+
                             streams.push({
                                 name: 'Cineby',
                                 title: displayTitle + ' [HiAnime]',
-                                url: src.url,
+                                url: proxyUrl,
                                 quality: res,
                                 size: 'Unknown',
-                                headers: {
-                                    'User-Agent': UA,
-                                    'Referer': 'https://hianime.to/',
-                                    'Origin': 'https://hianime.to',
-                                },
+                                headers: {},
                                 subtitles: subs,
                                 provider: 'cineby',
                             });

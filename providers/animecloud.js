@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-04-05T15:03:05.878Z
+ * Generated: 2026-04-05T15:23:41.138Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -45,6 +45,7 @@ var UA = "AnimeCloud/6.5 CFNetwork/1399 Darwin/22.1.0";
 var FETCH_TIMEOUT = 12e3;
 var FETCH_TIMEOUT_LONG = 25e3;
 var DECRYPT_BACKEND = "http://145.241.158.129:3112/animecloud/video";
+var STREAMS_BACKEND = "http://145.241.158.129:3112/animecloud/streams";
 function fetchWithTimeout(url, options, timeout) {
   var ms = timeout || FETCH_TIMEOUT;
   var controller;
@@ -608,6 +609,30 @@ function fetchVideoURL(epID, quality) {
     }
   });
 }
+function getStreamsFromBackend(tmdbId, mediaType, season, episode) {
+  return __async(this, null, function* () {
+    try {
+      console.log("[AnimeCloud] Using full backend pipeline");
+      var url = STREAMS_BACKEND + "?tmdbId=" + tmdbId + "&mediaType=" + encodeURIComponent(mediaType) + "&season=" + season + "&episode=" + episode;
+      var resp = yield fetchWithTimeout(url, { headers: { "Accept": "application/json" } }, 6e4);
+      if (!resp.ok) {
+        console.log("[AnimeCloud] Backend pipeline returned " + resp.status);
+        return [];
+      }
+      var data = yield resp.json();
+      if (data.error) {
+        console.log("[AnimeCloud] Backend pipeline error: " + data.error);
+        return [];
+      }
+      var streams = data.streams || [];
+      console.log("[AnimeCloud] Backend pipeline returned " + streams.length + " stream(s)");
+      return streams;
+    } catch (e) {
+      console.log("[AnimeCloud] Backend pipeline error: " + e.message);
+      return [];
+    }
+  });
+}
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
@@ -626,8 +651,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var anilistPromise = getAniListTitles(tmdb.title, tmdb.originalTitle, tmdb.year);
       var animeList = yield animeListPromise;
       if (!animeList || animeList.length === 0) {
-        console.log("[AnimeCloud] Failed to load anime list");
-        return [];
+        console.log("[AnimeCloud] Failed to load anime list \u2014 trying full backend pipeline");
+        return getStreamsFromBackend(tmdbId, mediaType, seasonNum, episodeNum);
       }
       console.log("[AnimeCloud] Anime catalog: " + animeList.length + " entries");
       var matchedAnime = matchAnime(animeList, tmdb.titles, seasonNum, isTV ? tmdb.seasonName : null);

@@ -1,10 +1,12 @@
-// AnimeCloud Nuvio Provider v2.8.0
-// Direct API integration with server-side fallback for TV compatibility.
+// AnimeCloud Nuvio Provider v2.9.0
+// Direct API integration with full server-side fallback for TV compatibility.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
-// v2.8.0: Backend fallback now triggers when crypto-js decryption returns null/empty,
-//         not only when crypto-js is absent (fixes silent TV failure where crypto-js
-//         loads but produces garbage, causing no streams to appear)
-// v2.7.2: Rewrite fetchWithTimeout to use AbortController (like Cineby) — setTimeout unreliable on TV
+// v2.9.0: Full server-side pipeline fallback — if AC API (khkhkhkh.com) is unreachable
+//         (TV network blocks it), call /animecloud/streams backend which runs entire
+//         pipeline (TMDB lookup, anime matching, episode find, decrypt) on Oracle VM.
+//         Local path still tried first for phone users (fast, no network hop to backend).
+// v2.8.0: Backend fallback triggers when crypto-js decryption returns null/empty
+// v2.7.2: Rewrite fetchWithTimeout to use AbortController (like Cineby)
 // v2.7.1: Fix TV detection — crypto-js may return empty object instead of throwing
 // v2.7.0: Server-side decryption fallback for TV (crypto-js unavailable on smart TV runtime)
 
@@ -31,6 +33,7 @@ var UA = 'AnimeCloud/6.5 CFNetwork/1399 Darwin/22.1.0';
 var FETCH_TIMEOUT = 12000; // 12s default timeout
 var FETCH_TIMEOUT_LONG = 25000; // 25s for large payloads (One Piece = 310KB, 1174 episodes)
 var DECRYPT_BACKEND = 'http://145.241.158.129:3112/animecloud/video';
+var STREAMS_BACKEND = 'http://145.241.158.129:3112/animecloud/streams';
 
 // ── Timeout wrapper (AbortController-based, like Cineby — setTimeout unreliable on TV) ──
 
@@ -649,6 +652,33 @@ async function fetchVideoURL(epID, quality) {
 
 // ── Main getStreams (v2.5.0 — try-match-first, AniList fallback only) ──
 
+async function getStreamsFromBackend(tmdbId, mediaType, season, episode) {
+    try {
+        console.log('[AnimeCloud] Using full backend pipeline');
+        var url = STREAMS_BACKEND +
+            '?tmdbId=' + tmdbId +
+            '&mediaType=' + encodeURIComponent(mediaType) +
+            '&season=' + season +
+            '&episode=' + episode;
+        var resp = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 60000);
+        if (!resp.ok) {
+            console.log('[AnimeCloud] Backend pipeline returned ' + resp.status);
+            return [];
+        }
+        var data = await resp.json();
+        if (data.error) {
+            console.log('[AnimeCloud] Backend pipeline error: ' + data.error);
+            return [];
+        }
+        var streams = data.streams || [];
+        console.log('[AnimeCloud] Backend pipeline returned ' + streams.length + ' stream(s)');
+        return streams;
+    } catch (e) {
+        console.log('[AnimeCloud] Backend pipeline error: ' + e.message);
+        return [];
+    }
+}
+
 async function getStreams(tmdbId, mediaType, season, episode) {
     try {
         var isTV = mediaType !== 'movie';
@@ -675,8 +705,8 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         var animeList = await animeListPromise;
         if (!animeList || animeList.length === 0) {
-            console.log('[AnimeCloud] Failed to load anime list');
-            return [];
+            console.log('[AnimeCloud] Failed to load anime list — trying full backend pipeline');
+            return getStreamsFromBackend(tmdbId, mediaType, seasonNum, episodeNum);
         }
         console.log('[AnimeCloud] Anime catalog: ' + animeList.length + ' entries');
 

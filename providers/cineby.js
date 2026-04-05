@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-05T15:02:10.798Z
+ * Generated: 2026-04-05T15:23:41.052Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -230,17 +230,14 @@ function getStreams(tmdbId, mediaType, season, episode) {
                 var res = normalizeQuality(qParts[0]);
                 var audioLabel = qParts[1] || "";
                 var displayTitle = audioLabel ? res + " - " + audioLabel : res;
+                var proxyUrl = BACKEND + "/hianime-proxy?url=" + encodeURIComponent(src.url);
                 streams.push({
                   name: "Cineby",
                   title: displayTitle + " [HiAnime]",
-                  url: src.url,
+                  url: proxyUrl,
                   quality: res,
                   size: "Unknown",
-                  headers: {
-                    "User-Agent": UA,
-                    "Referer": "https://hianime.to/",
-                    "Origin": "https://hianime.to"
-                  },
+                  headers: {},
                   subtitles: subs,
                   provider: "cineby"
                 });
