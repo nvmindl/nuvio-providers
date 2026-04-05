@@ -1,6 +1,9 @@
-// AnimeCloud Nuvio Provider v2.7.2
+// AnimeCloud Nuvio Provider v2.8.0
 // Direct API integration with server-side fallback for TV compatibility.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
+// v2.8.0: Backend fallback now triggers when crypto-js decryption returns null/empty,
+//         not only when crypto-js is absent (fixes silent TV failure where crypto-js
+//         loads but produces garbage, causing no streams to appear)
 // v2.7.2: Rewrite fetchWithTimeout to use AbortController (like Cineby) — setTimeout unreliable on TV
 // v2.7.1: Fix TV detection — crypto-js may return empty object instead of throwing
 // v2.7.0: Server-side decryption fallback for TV (crypto-js unavailable on smart TV runtime)
@@ -594,25 +597,30 @@ async function fetchVideoURL(epID, quality) {
                 body: 'command=getVideoURL&epID=' + epID + '&quality=' + quality,
             });
 
-            if (!response.ok) return null;
-
-            var text = await response.text();
-            if (!text || text.length === 0) return null;
-
-            var decrypted = decryptRNCryptor(text);
-            if (!decrypted) return null;
-
-            var data = JSON.parse(decrypted);
-            if (!data.result || data.result.length === 0) return null;
-
-            return { url: data.result[0].url, note: data.result[0].note || '' };
+            if (response.ok) {
+                var text = await response.text();
+                if (text && text.length > 0) {
+                    var decrypted = decryptRNCryptor(text);
+                    if (decrypted && decrypted.length > 0) {
+                        try {
+                            var data = JSON.parse(decrypted);
+                            if (data.result && data.result.length > 0) {
+                                return { url: data.result[0].url, note: data.result[0].note || '' };
+                            }
+                        } catch (parseErr) {
+                            console.log('[AnimeCloud] JSON parse error after decrypt (q=' + quality + '): ' + parseErr.message);
+                        }
+                    } else {
+                        console.log('[AnimeCloud] crypto-js decrypt returned empty (q=' + quality + ') — falling back to backend');
+                    }
+                }
+            }
         } catch (e) {
             console.log('[AnimeCloud] fetchVideoURL local error (q=' + quality + '): ' + e.message);
-            return null;
         }
     }
 
-    // Path 2: Server-side decryption fallback (TV — crypto-js unavailable)
+    // Path 2: Server-side decryption fallback (TV — crypto-js unavailable or returned garbage)
     try {
         console.log('[AnimeCloud] Using backend decrypt for epID=' + epID + ' q=' + quality);
         var backendUrl = DECRYPT_BACKEND + '?epID=' + epID + '&quality=' + quality;

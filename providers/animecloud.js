@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-04-05T11:58:50.871Z
+ * Generated: 2026-04-05T15:03:05.878Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -562,21 +562,26 @@ function fetchVideoURL(epID, quality) {
           },
           body: "command=getVideoURL&epID=" + epID + "&quality=" + quality
         });
-        if (!response.ok)
-          return null;
-        var text = yield response.text();
-        if (!text || text.length === 0)
-          return null;
-        var decrypted = decryptRNCryptor(text);
-        if (!decrypted)
-          return null;
-        var data = JSON.parse(decrypted);
-        if (!data.result || data.result.length === 0)
-          return null;
-        return { url: data.result[0].url, note: data.result[0].note || "" };
+        if (response.ok) {
+          var text = yield response.text();
+          if (text && text.length > 0) {
+            var decrypted = decryptRNCryptor(text);
+            if (decrypted && decrypted.length > 0) {
+              try {
+                var data = JSON.parse(decrypted);
+                if (data.result && data.result.length > 0) {
+                  return { url: data.result[0].url, note: data.result[0].note || "" };
+                }
+              } catch (parseErr) {
+                console.log("[AnimeCloud] JSON parse error after decrypt (q=" + quality + "): " + parseErr.message);
+              }
+            } else {
+              console.log("[AnimeCloud] crypto-js decrypt returned empty (q=" + quality + ") \u2014 falling back to backend");
+            }
+          }
+        }
       } catch (e) {
         console.log("[AnimeCloud] fetchVideoURL local error (q=" + quality + "): " + e.message);
-        return null;
       }
     }
     try {
