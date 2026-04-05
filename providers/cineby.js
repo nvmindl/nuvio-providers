@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-05T15:56:21.268Z
+ * Generated: 2026-04-05T22:22:53.257Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -35,7 +35,6 @@ var SERVERS = [
   { name: "Helium", endpoint: "1movies/sources-with-title" },
   { name: "Titanium", endpoint: "primesrcme/sources-with-title" }
 ];
-var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 function safeFetch(url, opts, ms) {
   ms = ms || 15e3;
   var controller;
@@ -359,17 +358,14 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
         var quality = normalizeQuality(src.quality);
         var serverTag = src.server ? " [" + src.server + "]" : "";
+        var proxyUrl = BACKEND + "/videasy-proxy?url=" + encodeURIComponent(src.url);
         streams.push({
           name: "Cineby",
           title: quality + serverTag,
-          url: src.url,
+          url: proxyUrl,
           quality,
           size: "",
-          headers: {
-            "User-Agent": UA,
-            "Referer": "https://www.vidking.net/",
-            "Origin": "https://www.vidking.net"
-          },
+          headers: {},
           subtitles: subs,
           provider: "cineby"
         });

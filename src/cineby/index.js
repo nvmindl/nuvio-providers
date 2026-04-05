@@ -1,10 +1,12 @@
-// Cineby v1.2.2 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// Cineby v1.3.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
 // v1.1.0: Add HiAnime path for anime
 // v1.1.1: Fix titleScore() containment-first scoring
 // v1.2.0: Route HiAnime m3u8 URLs through backend proxy (fixes web-player flash / .html segments)
 // v1.2.1: Fix stream display on TV — encode quality+dub/sub into name field, remove size 'Unknown'
 // v1.2.2: Fix JoJo/multi-part anime wrong episode — findHiAnimeId is now season-aware:
 //         passes seasonName (e.g. "Golden Wind") as tiebreaker when multiple entries score 1.0
+// v1.3.0: Route regular Videasy streams through backend videasy-proxy (fixes Android: CDN requires
+//         Referer/Origin headers and returns obfuscated segment extensions causing ExoPlayer failures)
 
 var BACKEND = 'http://145.241.158.129:3113';
 var VIDEASY_API = 'https://api.videasy.net';
@@ -397,17 +399,17 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             var quality = normalizeQuality(src.quality);
             var serverTag = src.server ? ' [' + src.server + ']' : '';
 
+            // Route through backend proxy to add required Referer/Origin headers
+            // and fix obfuscated segment extensions (fixes Android playback)
+            var proxyUrl = BACKEND + '/videasy-proxy?url=' + encodeURIComponent(src.url);
+
             streams.push({
                 name: 'Cineby',
                 title: quality + serverTag,
-                url: src.url,
+                url: proxyUrl,
                 quality: quality,
                 size: '',
-                headers: {
-                    'User-Agent': UA,
-                    'Referer': 'https://www.vidking.net/',
-                    'Origin': 'https://www.vidking.net',
-                },
+                headers: {},
                 subtitles: subs,
                 provider: 'cineby',
             });
