@@ -95,7 +95,7 @@
       "id": "Cineby",
       "name": "Cineby",
       "description": "Multi-server movie and TV streaming — 4K/1080p/720p from Videasy network with multilingual subtitles",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",

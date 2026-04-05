@@ -1,6 +1,8 @@
-// Cineby v1.1.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// Cineby v1.1.1 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
 // v1.1.0: Add HiAnime path for anime: detects Japanese animation via TMDB genres,
 //         searches anime-db.videasy.net for HiAnime ID, fetches separate Sub/Dub streams
+// v1.1.1: Fix titleScore() — containment-first scoring so short queries like "Kaiji"
+//         match long HiAnime titles like "Kaiji: Ultimate Survivor"
 // For movies/TV: fetches encrypted data (needs residential IP), Oracle backend decrypts
 // For anime: uses Videasy HiAnime API (plain JSON, no decryption needed)
 // Backend: 145.241.158.129:3113
@@ -98,13 +100,22 @@ function normTitle(s) {
         .trim();
 }
 
-// Simple scoring: count shared words
+// Containment-first scoring:
+// If ALL words of the shorter query appear in the longer title → score 1.0
+// (handles short titles like "Kaiji" matching "Kaiji: Ultimate Survivor")
+// Otherwise fall back to hits / max(len_a, len_b)
 function titleScore(a, b) {
     var wa = normTitle(a).split(' ').filter(Boolean);
     var wb = normTitle(b).split(' ').filter(Boolean);
-    var setB = {};
-    wb.forEach(function (w) { setB[w] = true; });
-    var hits = wa.filter(function (w) { return setB[w]; }).length;
+    // Determine query (shorter) and result (longer)
+    var query = wa.length <= wb.length ? wa : wb;
+    var result = wa.length <= wb.length ? wb : wa;
+    var setResult = {};
+    result.forEach(function (w) { setResult[w] = true; });
+    var hits = query.filter(function (w) { return setResult[w]; }).length;
+    // If every query word is found in the result, it's a strong containment match
+    if (hits === query.length) return 1.0;
+    // Otherwise partial overlap
     return hits / Math.max(wa.length, wb.length, 1);
 }
 

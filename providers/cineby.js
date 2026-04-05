@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-05T14:27:24.165Z
+ * Generated: 2026-04-05T15:02:10.798Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -119,13 +119,17 @@ function normTitle(s) {
 function titleScore(a, b) {
   var wa = normTitle(a).split(" ").filter(Boolean);
   var wb = normTitle(b).split(" ").filter(Boolean);
-  var setB = {};
-  wb.forEach(function(w) {
-    setB[w] = true;
+  var query = wa.length <= wb.length ? wa : wb;
+  var result = wa.length <= wb.length ? wb : wa;
+  var setResult = {};
+  result.forEach(function(w) {
+    setResult[w] = true;
   });
-  var hits = wa.filter(function(w) {
-    return setB[w];
+  var hits = query.filter(function(w) {
+    return setResult[w];
   }).length;
+  if (hits === query.length)
+    return 1;
   return hits / Math.max(wa.length, wb.length, 1);
 }
 function findHiAnimeId(title, originalTitle, year) {
