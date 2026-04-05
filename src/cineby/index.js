@@ -1,10 +1,14 @@
-// Cineby v1.0.0 — Multi-server movie/TV streaming via Videasy
-// Client fetches encrypted data (needs residential IP), Oracle backend decrypts
+// Cineby v1.1.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// v1.1.0: Add HiAnime path for anime: detects Japanese animation via TMDB genres,
+//         searches anime-db.videasy.net for HiAnime ID, fetches separate Sub/Dub streams
+// For movies/TV: fetches encrypted data (needs residential IP), Oracle backend decrypts
+// For anime: uses Videasy HiAnime API (plain JSON, no decryption needed)
 // Backend: 145.241.158.129:3113
 
 var BACKEND = 'http://145.241.158.129:3113';
 var VIDEASY_API = 'https://api.videasy.net';
 var VIDEASY_DB = 'https://db.videasy.net/3';
+var ANIME_DB = 'https://anime-db.videasy.net/api/v2/hianime';
 
 var SERVERS = [
     { name: 'Oxygen', endpoint: 'myflixerzupcloud/sources-with-title' },
@@ -13,6 +17,9 @@ var SERVERS = [
     { name: 'Helium', endpoint: '1movies/sources-with-title' },
     { name: 'Titanium', endpoint: 'primesrcme/sources-with-title' },
 ];
+
+// Anime genres in TMDB that indicate anime content
+var ANIME_GENRE_IDS = [16]; // Animation
 
 var UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -32,11 +39,11 @@ function safeFetch(url, opts, ms) {
 }
 
 async function getTmdbMeta(mediaType, tmdbId) {
-    var url = VIDEASY_DB + '/' + mediaType + '/' + tmdbId + '?append_to_response=external_ids';
+    var url = VIDEASY_DB + '/' + mediaType + '/' + tmdbId + '?append_to_response=external_ids,genres';
     var resp = await safeFetch(url);
     if (!resp.ok) throw new Error('TMDB ' + resp.status);
     var data = await resp.json();
-    var title, year, imdbId;
+    var title, year, imdbId, isAnime;
     if (mediaType === 'movie') {
         title = data.title;
         year = data.release_date ? new Date(data.release_date).getFullYear() : '';
@@ -45,7 +52,12 @@ async function getTmdbMeta(mediaType, tmdbId) {
         year = data.first_air_date ? new Date(data.first_air_date).getFullYear() : '';
     }
     imdbId = (data.external_ids && data.external_ids.imdb_id) || '';
-    return { title: title, year: year, imdbId: imdbId };
+    // Check if this is anime (animation genre + Japanese original language)
+    var genres = (data.genres || []).map(function (g) { return g.id; });
+    var isAnimation = genres.indexOf(16) !== -1;
+    var isJapanese = data.original_language === 'ja';
+    isAnime = mediaType === 'tv' && isAnimation && isJapanese;
+    return { title: title, year: year, imdbId: imdbId, isAnime: isAnime, originalTitle: data.original_name || data.original_title || '' };
 }
 
 async function fetchEncrypted(serverEndpoint, params) {
@@ -76,6 +88,96 @@ function normalizeQuality(q) {
     return q;
 }
 
+// ── HiAnime support ─────────────────────────────────────────────────────────
+
+// Normalize title for fuzzy matching
+function normTitle(s) {
+    return String(s || '').toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// Simple scoring: count shared words
+function titleScore(a, b) {
+    var wa = normTitle(a).split(' ').filter(Boolean);
+    var wb = normTitle(b).split(' ').filter(Boolean);
+    var setB = {};
+    wb.forEach(function (w) { setB[w] = true; });
+    var hits = wa.filter(function (w) { return setB[w]; }).length;
+    return hits / Math.max(wa.length, wb.length, 1);
+}
+
+async function findHiAnimeId(title, originalTitle, year) {
+    // Try primary title first, then original
+    var queries = [title];
+    if (originalTitle && normTitle(originalTitle) !== normTitle(title)) {
+        queries.push(originalTitle);
+    }
+
+    var bestId = null;
+    var bestScore = 0;
+    var bestHasDub = false;
+
+    for (var qi = 0; qi < queries.length; qi++) {
+        var q = queries[qi];
+        try {
+            var url = ANIME_DB + '/search?q=' + encodeURIComponent(q);
+            var resp = await safeFetch(url, {}, 10000);
+            if (!resp.ok) continue;
+            var data = await resp.json();
+            var results = (data.data && data.data.animes) || data.animes || [];
+
+            for (var i = 0; i < results.length; i++) {
+                var anime = results[i];
+                var score = titleScore(anime.name, q);
+                // Prefer exact matches; also factor in year proximity if available
+                if (score > bestScore || (score === bestScore && anime.episodes && anime.episodes.dub && !bestHasDub)) {
+                    bestScore = score;
+                    bestId = anime.id;
+                    bestHasDub = !!(anime.episodes && anime.episodes.dub);
+                }
+            }
+
+            // Good enough match found
+            if (bestScore >= 0.8) break;
+        } catch (e) {
+            console.log('[Cineby/HiAnime] Search error: ' + e.message);
+        }
+    }
+
+    if (bestScore < 0.4) {
+        console.log('[Cineby/HiAnime] No match found (best score: ' + bestScore.toFixed(2) + ')');
+        return null;
+    }
+
+    console.log('[Cineby/HiAnime] Matched: ' + bestId + ' (score: ' + bestScore.toFixed(2) + ')');
+    return bestId;
+}
+
+async function getHiAnimeStreams(hiAnimeId, episodeNumber) {
+    // Fetch both sub and dub in parallel; the endpoint returns all sources regardless of dub param
+    // but ordering differs. We use dub=true to get dub-first ordering.
+    var url = VIDEASY_API + '/hianime/sources-with-id' +
+        '?providerId=' + encodeURIComponent(hiAnimeId) +
+        '&episodeId=' + episodeNumber +
+        '&dub=true';
+
+    var resp = await safeFetch(url, {}, 20000);
+    if (!resp.ok) throw new Error('HiAnime API ' + resp.status);
+
+    var data = await resp.json();
+    var ms = data.mediaSources;
+    if (!ms) throw new Error('No mediaSources in response');
+
+    return {
+        sources: ms.sources || [],
+        subtitles: ms.subtitles || [],
+    };
+}
+
+// ── Main getStreams ─────────────────────────────────────────────────────────
+
 async function getStreams(tmdbId, mediaType, season, episode) {
     try {
         var mType = mediaType === 'movie' ? 'movie' : 'tv';
@@ -84,10 +186,79 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         console.log('[Cineby] Fetching ' + mType + ' tmdb:' + tmdbId + (mType === 'tv' ? ' S' + seasonId + 'E' + episodeId : ''));
 
-        // Step 1: Get TMDB metadata
+        // Step 1: Get TMDB metadata (also detects if it's anime)
         var meta = await getTmdbMeta(mType, tmdbId);
-        console.log('[Cineby] ' + meta.title + ' (' + meta.year + ')');
+        console.log('[Cineby] ' + meta.title + ' (' + meta.year + ')' + (meta.isAnime ? ' [ANIME]' : ''));
 
+        // ── ANIME PATH ────────────────────────────────────────────────────────
+        if (meta.isAnime) {
+            console.log('[Cineby] Using HiAnime path for anime');
+            try {
+                var hiAnimeId = await findHiAnimeId(meta.title, meta.originalTitle, meta.year);
+                if (!hiAnimeId) {
+                    console.log('[Cineby] HiAnime: no match, falling back to TV path');
+                    // Fall through to regular TV scraping
+                } else {
+                    var hiResult = await getHiAnimeStreams(hiAnimeId, episodeId);
+                    var hiSources = hiResult.sources;
+                    var hiSubtitles = hiResult.subtitles;
+
+                    console.log('[Cineby/HiAnime] ' + hiSources.length + ' sources, ' + hiSubtitles.length + ' subtitles');
+
+                    if (hiSources.length === 0) {
+                        console.log('[Cineby] HiAnime: no sources, falling back to TV path');
+                        // Fall through to regular TV scraping
+                    } else {
+                        // Format subtitles
+                        var subs = hiSubtitles
+                            .filter(function (s) { return s.url && s.url.indexOf('.vtt') !== -1; })
+                            .map(function (s) {
+                                return {
+                                    url: s.url,
+                                    lang: s.lang || s.language || 'Unknown',
+                                };
+                            });
+
+                        // Format sources - quality labels already contain "Dub" / "Sub"
+                        var streams = [];
+                        for (var j = 0; j < hiSources.length; j++) {
+                            var src = hiSources[j];
+                            if (!src.url) continue;
+
+                            // Quality label: "1080p - Dub" → show as-is in title
+                            var qLabel = src.quality || 'Unknown';
+                            // Normalize just the resolution part
+                            var qParts = qLabel.split(' - ');
+                            var res = normalizeQuality(qParts[0]);
+                            var audioLabel = qParts[1] || '';
+                            var displayTitle = audioLabel ? res + ' - ' + audioLabel : res;
+
+                            streams.push({
+                                name: 'Cineby',
+                                title: displayTitle + ' [HiAnime]',
+                                url: src.url,
+                                quality: res,
+                                size: 'Unknown',
+                                headers: {
+                                    'User-Agent': UA,
+                                    'Referer': 'https://hianime.to/',
+                                    'Origin': 'https://hianime.to',
+                                },
+                                subtitles: subs,
+                                provider: 'cineby',
+                            });
+                        }
+
+                        console.log('[Cineby/HiAnime] Returning ' + streams.length + ' streams');
+                        return streams;
+                    }
+                }
+            } catch (animeErr) {
+                console.log('[Cineby/HiAnime] Error: ' + animeErr.message + ' — falling back to TV path');
+            }
+        }
+
+        // ── REGULAR MOVIE/TV PATH ─────────────────────────────────────────────
         var params = {
             title: meta.title,
             mediaType: mType,

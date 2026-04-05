@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-02T11:39:53.976Z
+ * Generated: 2026-04-05T14:27:24.165Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -27,6 +27,7 @@ var __async = (__this, __arguments, generator) => {
 var BACKEND = "http://145.241.158.129:3113";
 var VIDEASY_API = "https://api.videasy.net";
 var VIDEASY_DB = "https://db.videasy.net/3";
+var ANIME_DB = "https://anime-db.videasy.net/api/v2/hianime";
 var SERVERS = [
   { name: "Oxygen", endpoint: "myflixerzupcloud/sources-with-title" },
   { name: "Hydrogen", endpoint: "cdn/sources-with-title" },
@@ -62,12 +63,12 @@ function safeFetch(url, opts, ms) {
 }
 function getTmdbMeta(mediaType, tmdbId) {
   return __async(this, null, function* () {
-    var url = VIDEASY_DB + "/" + mediaType + "/" + tmdbId + "?append_to_response=external_ids";
+    var url = VIDEASY_DB + "/" + mediaType + "/" + tmdbId + "?append_to_response=external_ids,genres";
     var resp = yield safeFetch(url);
     if (!resp.ok)
       throw new Error("TMDB " + resp.status);
     var data = yield resp.json();
-    var title, year, imdbId;
+    var title, year, imdbId, isAnime;
     if (mediaType === "movie") {
       title = data.title;
       year = data.release_date ? new Date(data.release_date).getFullYear() : "";
@@ -76,7 +77,13 @@ function getTmdbMeta(mediaType, tmdbId) {
       year = data.first_air_date ? new Date(data.first_air_date).getFullYear() : "";
     }
     imdbId = data.external_ids && data.external_ids.imdb_id || "";
-    return { title, year, imdbId };
+    var genres = (data.genres || []).map(function(g) {
+      return g.id;
+    });
+    var isAnimation = genres.indexOf(16) !== -1;
+    var isJapanese = data.original_language === "ja";
+    isAnime = mediaType === "tv" && isAnimation && isJapanese;
+    return { title, year, imdbId, isAnime, originalTitle: data.original_name || data.original_title || "" };
   });
 }
 function fetchEncrypted(serverEndpoint, params) {
@@ -106,6 +113,78 @@ function normalizeQuality(q) {
     return "360p";
   return q;
 }
+function normTitle(s) {
+  return String(s || "").toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function titleScore(a, b) {
+  var wa = normTitle(a).split(" ").filter(Boolean);
+  var wb = normTitle(b).split(" ").filter(Boolean);
+  var setB = {};
+  wb.forEach(function(w) {
+    setB[w] = true;
+  });
+  var hits = wa.filter(function(w) {
+    return setB[w];
+  }).length;
+  return hits / Math.max(wa.length, wb.length, 1);
+}
+function findHiAnimeId(title, originalTitle, year) {
+  return __async(this, null, function* () {
+    var queries = [title];
+    if (originalTitle && normTitle(originalTitle) !== normTitle(title)) {
+      queries.push(originalTitle);
+    }
+    var bestId = null;
+    var bestScore = 0;
+    var bestHasDub = false;
+    for (var qi = 0; qi < queries.length; qi++) {
+      var q = queries[qi];
+      try {
+        var url = ANIME_DB + "/search?q=" + encodeURIComponent(q);
+        var resp = yield safeFetch(url, {}, 1e4);
+        if (!resp.ok)
+          continue;
+        var data = yield resp.json();
+        var results = data.data && data.data.animes || data.animes || [];
+        for (var i = 0; i < results.length; i++) {
+          var anime = results[i];
+          var score = titleScore(anime.name, q);
+          if (score > bestScore || score === bestScore && anime.episodes && anime.episodes.dub && !bestHasDub) {
+            bestScore = score;
+            bestId = anime.id;
+            bestHasDub = !!(anime.episodes && anime.episodes.dub);
+          }
+        }
+        if (bestScore >= 0.8)
+          break;
+      } catch (e) {
+        console.log("[Cineby/HiAnime] Search error: " + e.message);
+      }
+    }
+    if (bestScore < 0.4) {
+      console.log("[Cineby/HiAnime] No match found (best score: " + bestScore.toFixed(2) + ")");
+      return null;
+    }
+    console.log("[Cineby/HiAnime] Matched: " + bestId + " (score: " + bestScore.toFixed(2) + ")");
+    return bestId;
+  });
+}
+function getHiAnimeStreams(hiAnimeId, episodeNumber) {
+  return __async(this, null, function* () {
+    var url = VIDEASY_API + "/hianime/sources-with-id?providerId=" + encodeURIComponent(hiAnimeId) + "&episodeId=" + episodeNumber + "&dub=true";
+    var resp = yield safeFetch(url, {}, 2e4);
+    if (!resp.ok)
+      throw new Error("HiAnime API " + resp.status);
+    var data = yield resp.json();
+    var ms = data.mediaSources;
+    if (!ms)
+      throw new Error("No mediaSources in response");
+    return {
+      sources: ms.sources || [],
+      subtitles: ms.subtitles || []
+    };
+  });
+}
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
@@ -114,7 +193,62 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var episodeId = String(parseInt(episode, 10) || 1);
       console.log("[Cineby] Fetching " + mType + " tmdb:" + tmdbId + (mType === "tv" ? " S" + seasonId + "E" + episodeId : ""));
       var meta = yield getTmdbMeta(mType, tmdbId);
-      console.log("[Cineby] " + meta.title + " (" + meta.year + ")");
+      console.log("[Cineby] " + meta.title + " (" + meta.year + ")" + (meta.isAnime ? " [ANIME]" : ""));
+      if (meta.isAnime) {
+        console.log("[Cineby] Using HiAnime path for anime");
+        try {
+          var hiAnimeId = yield findHiAnimeId(meta.title, meta.originalTitle, meta.year);
+          if (!hiAnimeId) {
+            console.log("[Cineby] HiAnime: no match, falling back to TV path");
+          } else {
+            var hiResult = yield getHiAnimeStreams(hiAnimeId, episodeId);
+            var hiSources = hiResult.sources;
+            var hiSubtitles = hiResult.subtitles;
+            console.log("[Cineby/HiAnime] " + hiSources.length + " sources, " + hiSubtitles.length + " subtitles");
+            if (hiSources.length === 0) {
+              console.log("[Cineby] HiAnime: no sources, falling back to TV path");
+            } else {
+              var subs = hiSubtitles.filter(function(s) {
+                return s.url && s.url.indexOf(".vtt") !== -1;
+              }).map(function(s) {
+                return {
+                  url: s.url,
+                  lang: s.lang || s.language || "Unknown"
+                };
+              });
+              var streams = [];
+              for (var j = 0; j < hiSources.length; j++) {
+                var src = hiSources[j];
+                if (!src.url)
+                  continue;
+                var qLabel = src.quality || "Unknown";
+                var qParts = qLabel.split(" - ");
+                var res = normalizeQuality(qParts[0]);
+                var audioLabel = qParts[1] || "";
+                var displayTitle = audioLabel ? res + " - " + audioLabel : res;
+                streams.push({
+                  name: "Cineby",
+                  title: displayTitle + " [HiAnime]",
+                  url: src.url,
+                  quality: res,
+                  size: "Unknown",
+                  headers: {
+                    "User-Agent": UA,
+                    "Referer": "https://hianime.to/",
+                    "Origin": "https://hianime.to"
+                  },
+                  subtitles: subs,
+                  provider: "cineby"
+                });
+              }
+              console.log("[Cineby/HiAnime] Returning " + streams.length + " streams");
+              return streams;
+            }
+          }
+        } catch (animeErr) {
+          console.log("[Cineby/HiAnime] Error: " + animeErr.message + " \u2014 falling back to TV path");
+        }
+      }
       var params = {
         title: meta.title,
         mediaType: mType,
