@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-08T13:22:27.199Z
+ * Generated: 2026-04-08T13:25:56.204Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -63,7 +63,7 @@ function safeFetch(url, opts, ms) {
 function getTmdbMeta(mediaType, tmdbId, season) {
   return __async(this, null, function* () {
     var url = VIDEASY_DB + "/" + mediaType + "/" + tmdbId + "?append_to_response=external_ids,genres";
-    var resp = yield safeFetch(url);
+    var resp = yield safeFetch(url, {}, 8e3);
     if (!resp.ok)
       throw new Error("TMDB " + resp.status);
     var data = yield resp.json();
@@ -102,7 +102,7 @@ function fetchEncrypted(serverEndpoint, params) {
     var url = VIDEASY_API + "/" + serverEndpoint + "?title=" + encodeURIComponent(params.title) + "&mediaType=" + params.mediaType + "&year=" + params.year + "&episodeId=" + (params.episodeId || "1") + "&seasonId=" + (params.seasonId || "1") + "&tmdbId=" + params.tmdbId + "&imdbId=" + encodeURIComponent(params.imdbId || "") + "&_t=" + Date.now();
     var resp = yield safeFetch(url, {
       headers: { "Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache" }
-    }, 2e4);
+    }, 12e3);
     if (!resp.ok)
       throw new Error("API " + resp.status);
     return resp.text();
@@ -149,35 +149,35 @@ function findHiAnimeId(title, originalTitle, year, seasonName, seasonEpisodeCoun
     if (originalTitle && normTitle(originalTitle) !== normTitle(title)) {
       queries.push(originalTitle);
     }
+    var searchResults = yield Promise.all(queries.map(function(q2) {
+      var url = ANIME_DB + "/search?q=" + encodeURIComponent(q2);
+      return safeFetch(url, {}, 8e3).then(function(resp) {
+        return resp.ok ? resp.json() : null;
+      }).then(function(data) {
+        if (!data)
+          return [];
+        return data.data && data.data.animes || data.animes || [];
+      }).catch(function() {
+        return [];
+      });
+    }));
     var bestId = null;
     var bestScore = 0;
     var bestHasDub = false;
     var allResults = [];
-    for (var qi = 0; qi < queries.length; qi++) {
+    for (var qi = 0; qi < searchResults.length; qi++) {
+      var results = searchResults[qi];
       var q = queries[qi];
-      try {
-        var url = ANIME_DB + "/search?q=" + encodeURIComponent(q);
-        var resp = yield safeFetch(url, {}, 1e4);
-        if (!resp.ok)
-          continue;
-        var data = yield resp.json();
-        var results = data.data && data.data.animes || data.animes || [];
-        for (var i = 0; i < results.length; i++) {
-          var anime = results[i];
-          var score = titleScore(anime.name, q);
-          if (score > bestScore || score === bestScore && anime.episodes && anime.episodes.dub && !bestHasDub) {
-            bestScore = score;
-            bestId = anime.id;
-            bestHasDub = !!(anime.episodes && anime.episodes.dub);
-          }
-          if (score >= 0.8) {
-            allResults.push(anime);
-          }
+      for (var i = 0; i < results.length; i++) {
+        var anime = results[i];
+        var score = titleScore(anime.name, q);
+        if (score > bestScore || score === bestScore && anime.episodes && anime.episodes.dub && !bestHasDub) {
+          bestScore = score;
+          bestId = anime.id;
+          bestHasDub = !!(anime.episodes && anime.episodes.dub);
         }
-        if (bestScore >= 0.8)
-          break;
-      } catch (e) {
-        console.log("[Cineby/HiAnime] Search error: " + e.message);
+        if (score >= 0.8)
+          allResults.push(anime);
       }
     }
     if (bestScore < 0.4) {
@@ -228,7 +228,7 @@ function findHiAnimeId(title, originalTitle, year, seasonName, seasonEpisodeCoun
 function getHiAnimeStreams(hiAnimeId, episodeNumber) {
   return __async(this, null, function* () {
     var url = VIDEASY_API + "/hianime/sources-with-id?providerId=" + encodeURIComponent(hiAnimeId) + "&episodeId=" + episodeNumber + "&dub=true";
-    var resp = yield safeFetch(url, {}, 2e4);
+    var resp = yield safeFetch(url, {}, 15e3);
     if (!resp.ok)
       throw new Error("HiAnime API " + resp.status);
     var data = yield resp.json();
@@ -336,7 +336,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items, tmdbId: String(tmdbId) })
-      }, 6e4);
+      }, 3e4);
       if (!resp.ok) {
         console.log("[Cineby] Backend returned " + resp.status);
         return [];
@@ -349,21 +349,21 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var sources = data.sources || [];
       var subtitles = data.subtitles || [];
       console.log("[Cineby] " + sources.length + " sources from [" + (data.servers || []).join(", ") + "]");
+      var subs = [];
+      for (var k = 0; k < subtitles.length; k++) {
+        var sub = subtitles[k];
+        if (sub.url) {
+          subs.push({
+            url: sub.url,
+            lang: sub.lang || sub.language || "Unknown"
+          });
+        }
+      }
       var streams = [];
       for (var j = 0; j < sources.length; j++) {
         var src = sources[j];
         if (!src.url)
           continue;
-        var subs = [];
-        for (var k = 0; k < subtitles.length; k++) {
-          var sub = subtitles[k];
-          if (sub.url) {
-            subs.push({
-              url: sub.url,
-              lang: sub.lang || sub.language || "Unknown"
-            });
-          }
-        }
         var quality = normalizeQuality(src.quality);
         var serverTag = src.server ? " [" + src.server + "]" : "";
         var proxyUrl = BACKEND + "/videasy-proxy?url=" + encodeURIComponent(src.url);

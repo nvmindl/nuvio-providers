@@ -1,4 +1,4 @@
-// Cineby v1.3.1 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// Cineby v1.4.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
 // v1.1.0: Add HiAnime path for anime
 // v1.1.1: Fix titleScore() containment-first scoring
 // v1.2.0: Route HiAnime m3u8 URLs through backend proxy (fixes web-player flash / .html segments)
@@ -9,6 +9,7 @@
 //         Referer/Origin headers and returns obfuscated segment extensions causing ExoPlayer failures)
 // v1.3.1: Fix JoJo S1 wrong entry — season tiebreaker now factors in episode count so entries with
 //         far fewer episodes than the TMDB season cannot win over a better-populated entry
+// v1.4.0: Performance — TMDB + server fetches in parallel, tighter timeouts, parallel HiAnime search
 
 var BACKEND = 'http://145.241.158.129:3113';
 var VIDEASY_API = 'https://api.videasy.net';
@@ -22,9 +23,6 @@ var SERVERS = [
     { name: 'Helium', endpoint: '1movies/sources-with-title' },
     { name: 'Titanium', endpoint: 'primesrcme/sources-with-title' },
 ];
-
-// Anime genres in TMDB that indicate anime content
-var ANIME_GENRE_IDS = [16]; // Animation
 
 var UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -45,7 +43,7 @@ function safeFetch(url, opts, ms) {
 
 async function getTmdbMeta(mediaType, tmdbId, season) {
     var url = VIDEASY_DB + '/' + mediaType + '/' + tmdbId + '?append_to_response=external_ids,genres';
-    var resp = await safeFetch(url);
+    var resp = await safeFetch(url, {}, 8000);
     if (!resp.ok) throw new Error('TMDB ' + resp.status);
     var data = await resp.json();
     var title, year, imdbId, isAnime;
@@ -57,12 +55,10 @@ async function getTmdbMeta(mediaType, tmdbId, season) {
         year = data.first_air_date ? new Date(data.first_air_date).getFullYear() : '';
     }
     imdbId = (data.external_ids && data.external_ids.imdb_id) || '';
-    // Check if this is anime (animation genre + Japanese original language)
     var genres = (data.genres || []).map(function (g) { return g.id; });
     var isAnimation = genres.indexOf(16) !== -1;
     var isJapanese = data.original_language === 'ja';
     isAnime = mediaType === 'tv' && isAnimation && isJapanese;
-    // Extract season name and episode count (used for HiAnime part matching)
     var seasonName = null;
     var seasonEpisodeCount = 0;
     if (season && data.seasons) {
@@ -90,7 +86,7 @@ async function fetchEncrypted(serverEndpoint, params) {
         '&_t=' + Date.now();
     var resp = await safeFetch(url, {
         headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
-    }, 20000);
+    }, 12000);
     if (!resp.ok) throw new Error('API ' + resp.status);
     return resp.text();
 }
@@ -108,7 +104,6 @@ function normalizeQuality(q) {
 
 // ── HiAnime support ─────────────────────────────────────────────────────────
 
-// Normalize title for fuzzy matching
 function normTitle(s) {
     return String(s || '').toLowerCase()
         .replace(/[^\w\s]/g, ' ')
@@ -116,64 +111,53 @@ function normTitle(s) {
         .trim();
 }
 
-// Containment-first scoring:
-// If ALL words of the shorter query appear in the longer title → score 1.0
-// (handles short titles like "Kaiji" matching "Kaiji: Ultimate Survivor")
-// Otherwise fall back to hits / max(len_a, len_b)
 function titleScore(a, b) {
     var wa = normTitle(a).split(' ').filter(Boolean);
     var wb = normTitle(b).split(' ').filter(Boolean);
-    // Determine query (shorter) and result (longer)
     var query = wa.length <= wb.length ? wa : wb;
     var result = wa.length <= wb.length ? wb : wa;
     var setResult = {};
     result.forEach(function (w) { setResult[w] = true; });
     var hits = query.filter(function (w) { return setResult[w]; }).length;
-    // If every query word is found in the result, it's a strong containment match
     if (hits === query.length) return 1.0;
-    // Otherwise partial overlap
     return hits / Math.max(wa.length, wb.length, 1);
 }
 
 async function findHiAnimeId(title, originalTitle, year, seasonName, seasonEpisodeCount) {
-    // Try primary title first, then original
     var queries = [title];
     if (originalTitle && normTitle(originalTitle) !== normTitle(title)) {
         queries.push(originalTitle);
     }
 
+    // Search all queries in parallel instead of sequentially
+    var searchResults = await Promise.all(queries.map(function(q) {
+        var url = ANIME_DB + '/search?q=' + encodeURIComponent(q);
+        return safeFetch(url, {}, 8000)
+            .then(function(resp) { return resp.ok ? resp.json() : null; })
+            .then(function(data) {
+                if (!data) return [];
+                return (data.data && data.data.animes) || data.animes || [];
+            })
+            .catch(function() { return []; });
+    }));
+
     var bestId = null;
     var bestScore = 0;
     var bestHasDub = false;
-    var allResults = []; // collect all results for season-name tiebreaker
+    var allResults = [];
 
-    for (var qi = 0; qi < queries.length; qi++) {
+    for (var qi = 0; qi < searchResults.length; qi++) {
+        var results = searchResults[qi];
         var q = queries[qi];
-        try {
-            var url = ANIME_DB + '/search?q=' + encodeURIComponent(q);
-            var resp = await safeFetch(url, {}, 10000);
-            if (!resp.ok) continue;
-            var data = await resp.json();
-            var results = (data.data && data.data.animes) || data.animes || [];
-
-            for (var i = 0; i < results.length; i++) {
-                var anime = results[i];
-                var score = titleScore(anime.name, q);
-                if (score > bestScore || (score === bestScore && anime.episodes && anime.episodes.dub && !bestHasDub)) {
-                    bestScore = score;
-                    bestId = anime.id;
-                    bestHasDub = !!(anime.episodes && anime.episodes.dub);
-                }
-                // Collect all results at high score for tiebreaker
-                if (score >= 0.8) {
-                    allResults.push(anime);
-                }
+        for (var i = 0; i < results.length; i++) {
+            var anime = results[i];
+            var score = titleScore(anime.name, q);
+            if (score > bestScore || (score === bestScore && anime.episodes && anime.episodes.dub && !bestHasDub)) {
+                bestScore = score;
+                bestId = anime.id;
+                bestHasDub = !!(anime.episodes && anime.episodes.dub);
             }
-
-            // Good enough match found
-            if (bestScore >= 0.8) break;
-        } catch (e) {
-            console.log('[Cineby/HiAnime] Search error: ' + e.message);
+            if (score >= 0.8) allResults.push(anime);
         }
     }
 
@@ -182,12 +166,6 @@ async function findHiAnimeId(title, originalTitle, year, seasonName, seasonEpiso
         return null;
     }
 
-    // Season-name tiebreaker: when multiple entries score equally (e.g. all JoJo parts score 1.0),
-    // use TMDB seasonName (e.g. "Golden Wind") to pick the right part entry.
-    // Also factors in episode count: if seasonEpisodeCount is known, entries with far fewer
-    // episodes than required (< 50% of season count) are penalized to avoid picking stub entries
-    // (e.g. JoJo "Phantom Blood" with 1 ep vs the real S1 entry with 26 eps).
-    // Only apply when there are multiple high-scoring results and a seasonName is available.
     if (seasonName && allResults.length > 1) {
         var normSeason = normTitle(seasonName);
         var seasonWords = normSeason.split(' ').filter(function(w) { return w.length > 2; });
@@ -203,12 +181,10 @@ async function findHiAnimeId(title, originalTitle, year, seasonName, seasonEpiso
                     if (normName.indexOf(seasonWords[w]) > -1) hits++;
                 }
                 var snScore = hits / seasonWords.length;
-                // Episode count factor: if TMDB season has N episodes and this entry has far fewer
-                // (< 50% of N), apply a penalty so stub entries don't win over real ones.
                 if (seasonEpisodeCount > 4) {
                     var totalEps = (anime.episodes && (anime.episodes.sub || anime.episodes.dub || 0)) || 0;
                     if (totalEps > 0 && totalEps < seasonEpisodeCount * 0.5) {
-                        snScore *= 0.3; // heavy penalty — this entry is too small
+                        snScore *= 0.3;
                     }
                 }
                 var hasDub = !!(anime.episodes && anime.episodes.dub);
@@ -230,14 +206,12 @@ async function findHiAnimeId(title, originalTitle, year, seasonName, seasonEpiso
 }
 
 async function getHiAnimeStreams(hiAnimeId, episodeNumber) {
-    // Fetch both sub and dub in parallel; the endpoint returns all sources regardless of dub param
-    // but ordering differs. We use dub=true to get dub-first ordering.
     var url = VIDEASY_API + '/hianime/sources-with-id' +
         '?providerId=' + encodeURIComponent(hiAnimeId) +
         '&episodeId=' + episodeNumber +
         '&dub=true';
 
-    var resp = await safeFetch(url, {}, 20000);
+    var resp = await safeFetch(url, {}, 15000);
     if (!resp.ok) throw new Error('HiAnime API ' + resp.status);
 
     var data = await resp.json();
@@ -260,7 +234,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         console.log('[Cineby] Fetching ' + mType + ' tmdb:' + tmdbId + (mType === 'tv' ? ' S' + seasonId + 'E' + episodeId : ''));
 
-        // Step 1: Get TMDB metadata (also detects if it's anime)
+        // Step 1: Get TMDB metadata
         var meta = await getTmdbMeta(mType, tmdbId, mType === 'tv' ? seasonId : null);
         console.log('[Cineby] ' + meta.title + ' (' + meta.year + ')' + (meta.isAnime ? ' [ANIME]' : '') + (meta.seasonName ? ' [' + meta.seasonName + ']' : ''));
 
@@ -271,7 +245,6 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                 var hiAnimeId = await findHiAnimeId(meta.title, meta.originalTitle, meta.year, meta.seasonName, meta.seasonEpisodeCount);
                 if (!hiAnimeId) {
                     console.log('[Cineby] HiAnime: no match, falling back to TV path');
-                    // Fall through to regular TV scraping
                 } else {
                     var hiResult = await getHiAnimeStreams(hiAnimeId, episodeId);
                     var hiSources = hiResult.sources;
@@ -281,9 +254,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
                     if (hiSources.length === 0) {
                         console.log('[Cineby] HiAnime: no sources, falling back to TV path');
-                        // Fall through to regular TV scraping
                     } else {
-                        // Format subtitles
                         var subs = hiSubtitles
                             .filter(function (s) { return s.url && s.url.indexOf('.vtt') !== -1; })
                             .map(function (s) {
@@ -293,26 +264,17 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                                 };
                             });
 
-                        // Format sources - quality labels already contain "Dub" / "Sub"
                         var streams = [];
                         for (var j = 0; j < hiSources.length; j++) {
                             var src = hiSources[j];
                             if (!src.url) continue;
 
-                            // Quality label: "1080p - Dub" → show as-is in title
                             var qLabel = src.quality || 'Unknown';
-                            // Normalize just the resolution part
                             var qParts = qLabel.split(' - ');
                             var res = normalizeQuality(qParts[0]);
                             var audioLabel = qParts[1] || '';
                             var displayTitle = audioLabel ? res + ' - ' + audioLabel : res;
-
-                            // Route through backend proxy to fix .html segment issue
                             var proxyUrl = BACKEND + '/hianime-proxy?url=' + encodeURIComponent(src.url);
-
-                            // Build name with quality + audio label so TV displays it properly
-                            // TV renders: name (line1), title (line2), size (line3)
-                            // We put the key info in name so it's always visible
                             var streamName = audioLabel
                                 ? 'Cineby HiAnime ' + res + ' ' + audioLabel
                                 : 'Cineby HiAnime ' + res;
@@ -349,7 +311,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             episodeId: episodeId,
         };
 
-        // Step 2: Fetch encrypted sources from all servers in parallel (from user's residential IP)
+        // Step 2: Fetch encrypted sources from all servers in parallel
         var encPromises = SERVERS.map(function (srv) {
             return fetchEncrypted(srv.endpoint, params)
                 .then(function (text) {
@@ -376,7 +338,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ items: items, tmdbId: String(tmdbId) }),
-        }, 60000);
+        }, 30000);
 
         if (!resp.ok) {
             console.log('[Cineby] Backend returned ' + resp.status);
@@ -394,28 +356,25 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         console.log('[Cineby] ' + sources.length + ' sources from [' + (data.servers || []).join(', ') + ']');
 
         // Step 4: Format as Nuvio stream objects
+        // Build subs array once (shared across all streams)
+        var subs = [];
+        for (var k = 0; k < subtitles.length; k++) {
+            var sub = subtitles[k];
+            if (sub.url) {
+                subs.push({
+                    url: sub.url,
+                    lang: sub.lang || sub.language || 'Unknown',
+                });
+            }
+        }
+
         var streams = [];
         for (var j = 0; j < sources.length; j++) {
             var src = sources[j];
             if (!src.url) continue;
 
-            // Build subtitle array for this stream
-            var subs = [];
-            for (var k = 0; k < subtitles.length; k++) {
-                var sub = subtitles[k];
-                if (sub.url) {
-                    subs.push({
-                        url: sub.url,
-                        lang: sub.lang || sub.language || 'Unknown',
-                    });
-                }
-            }
-
             var quality = normalizeQuality(src.quality);
             var serverTag = src.server ? ' [' + src.server + ']' : '';
-
-            // Route through backend proxy to add required Referer/Origin headers
-            // and fix obfuscated segment extensions (fixes Android playback)
             var proxyUrl = BACKEND + '/videasy-proxy?url=' + encodeURIComponent(src.url);
 
             streams.push({
