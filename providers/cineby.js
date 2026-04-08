@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-05T22:22:53.257Z
+ * Generated: 2026-04-08T11:34:07.928Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -83,16 +83,18 @@ function getTmdbMeta(mediaType, tmdbId, season) {
     var isJapanese = data.original_language === "ja";
     isAnime = mediaType === "tv" && isAnimation && isJapanese;
     var seasonName = null;
+    var seasonEpisodeCount = 0;
     if (season && data.seasons) {
       var seasonInt = parseInt(season, 10);
       for (var i = 0; i < data.seasons.length; i++) {
         if (data.seasons[i].season_number === seasonInt) {
           seasonName = data.seasons[i].name;
+          seasonEpisodeCount = data.seasons[i].episode_count || 0;
           break;
         }
       }
     }
-    return { title, year, imdbId, isAnime, originalTitle: data.original_name || data.original_title || "", seasonName };
+    return { title, year, imdbId, isAnime, originalTitle: data.original_name || data.original_title || "", seasonName, seasonEpisodeCount };
   });
 }
 function fetchEncrypted(serverEndpoint, params) {
@@ -141,7 +143,7 @@ function titleScore(a, b) {
     return 1;
   return hits / Math.max(wa.length, wb.length, 1);
 }
-function findHiAnimeId(title, originalTitle, year, seasonName) {
+function findHiAnimeId(title, originalTitle, year, seasonName, seasonEpisodeCount) {
   return __async(this, null, function* () {
     var queries = [title];
     if (originalTitle && normTitle(originalTitle) !== normTitle(title)) {
@@ -200,6 +202,12 @@ function findHiAnimeId(title, originalTitle, year, seasonName) {
               hits++;
           }
           var snScore = hits / seasonWords.length;
+          if (seasonEpisodeCount > 4) {
+            var totalEps = anime.episodes && (anime.episodes.sub || anime.episodes.dub || 0) || 0;
+            if (totalEps > 0 && totalEps < seasonEpisodeCount * 0.5) {
+              snScore *= 0.3;
+            }
+          }
           var hasDub = !!(anime.episodes && anime.episodes.dub);
           if (snScore > bestSeasonScore || snScore === bestSeasonScore && hasDub && !bestSeasonHasDub) {
             bestSeasonScore = snScore;
@@ -245,7 +253,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       if (meta.isAnime) {
         console.log("[Cineby] Using HiAnime path for anime");
         try {
-          var hiAnimeId = yield findHiAnimeId(meta.title, meta.originalTitle, meta.year, meta.seasonName);
+          var hiAnimeId = yield findHiAnimeId(meta.title, meta.originalTitle, meta.year, meta.seasonName, meta.seasonEpisodeCount);
           if (!hiAnimeId) {
             console.log("[Cineby] HiAnime: no match, falling back to TV path");
           } else {

@@ -1,4 +1,4 @@
-// Cineby v1.3.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// Cineby v1.3.1 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
 // v1.1.0: Add HiAnime path for anime
 // v1.1.1: Fix titleScore() containment-first scoring
 // v1.2.0: Route HiAnime m3u8 URLs through backend proxy (fixes web-player flash / .html segments)
@@ -7,6 +7,8 @@
 //         passes seasonName (e.g. "Golden Wind") as tiebreaker when multiple entries score 1.0
 // v1.3.0: Route regular Videasy streams through backend videasy-proxy (fixes Android: CDN requires
 //         Referer/Origin headers and returns obfuscated segment extensions causing ExoPlayer failures)
+// v1.3.1: Fix JoJo S1 wrong entry — season tiebreaker now factors in episode count so entries with
+//         far fewer episodes than the TMDB season cannot win over a better-populated entry
 
 var BACKEND = 'http://145.241.158.129:3113';
 var VIDEASY_API = 'https://api.videasy.net';
@@ -60,18 +62,20 @@ async function getTmdbMeta(mediaType, tmdbId, season) {
     var isAnimation = genres.indexOf(16) !== -1;
     var isJapanese = data.original_language === 'ja';
     isAnime = mediaType === 'tv' && isAnimation && isJapanese;
-    // Extract season name (e.g. "Golden Wind" for JoJo S4) — used for HiAnime part matching
+    // Extract season name and episode count (used for HiAnime part matching)
     var seasonName = null;
+    var seasonEpisodeCount = 0;
     if (season && data.seasons) {
         var seasonInt = parseInt(season, 10);
         for (var i = 0; i < data.seasons.length; i++) {
             if (data.seasons[i].season_number === seasonInt) {
                 seasonName = data.seasons[i].name;
+                seasonEpisodeCount = data.seasons[i].episode_count || 0;
                 break;
             }
         }
     }
-    return { title: title, year: year, imdbId: imdbId, isAnime: isAnime, originalTitle: data.original_name || data.original_title || '', seasonName: seasonName };
+    return { title: title, year: year, imdbId: imdbId, isAnime: isAnime, originalTitle: data.original_name || data.original_title || '', seasonName: seasonName, seasonEpisodeCount: seasonEpisodeCount };
 }
 
 async function fetchEncrypted(serverEndpoint, params) {
@@ -131,7 +135,7 @@ function titleScore(a, b) {
     return hits / Math.max(wa.length, wb.length, 1);
 }
 
-async function findHiAnimeId(title, originalTitle, year, seasonName) {
+async function findHiAnimeId(title, originalTitle, year, seasonName, seasonEpisodeCount) {
     // Try primary title first, then original
     var queries = [title];
     if (originalTitle && normTitle(originalTitle) !== normTitle(title)) {
@@ -180,6 +184,9 @@ async function findHiAnimeId(title, originalTitle, year, seasonName) {
 
     // Season-name tiebreaker: when multiple entries score equally (e.g. all JoJo parts score 1.0),
     // use TMDB seasonName (e.g. "Golden Wind") to pick the right part entry.
+    // Also factors in episode count: if seasonEpisodeCount is known, entries with far fewer
+    // episodes than required (< 50% of season count) are penalized to avoid picking stub entries
+    // (e.g. JoJo "Phantom Blood" with 1 ep vs the real S1 entry with 26 eps).
     // Only apply when there are multiple high-scoring results and a seasonName is available.
     if (seasonName && allResults.length > 1) {
         var normSeason = normTitle(seasonName);
@@ -196,6 +203,14 @@ async function findHiAnimeId(title, originalTitle, year, seasonName) {
                     if (normName.indexOf(seasonWords[w]) > -1) hits++;
                 }
                 var snScore = hits / seasonWords.length;
+                // Episode count factor: if TMDB season has N episodes and this entry has far fewer
+                // (< 50% of N), apply a penalty so stub entries don't win over real ones.
+                if (seasonEpisodeCount > 4) {
+                    var totalEps = (anime.episodes && (anime.episodes.sub || anime.episodes.dub || 0)) || 0;
+                    if (totalEps > 0 && totalEps < seasonEpisodeCount * 0.5) {
+                        snScore *= 0.3; // heavy penalty — this entry is too small
+                    }
+                }
                 var hasDub = !!(anime.episodes && anime.episodes.dub);
                 if (snScore > bestSeasonScore || (snScore === bestSeasonScore && hasDub && !bestSeasonHasDub)) {
                     bestSeasonScore = snScore;
@@ -253,7 +268,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         if (meta.isAnime) {
             console.log('[Cineby] Using HiAnime path for anime');
             try {
-                var hiAnimeId = await findHiAnimeId(meta.title, meta.originalTitle, meta.year, meta.seasonName);
+                var hiAnimeId = await findHiAnimeId(meta.title, meta.originalTitle, meta.year, meta.seasonName, meta.seasonEpisodeCount);
                 if (!hiAnimeId) {
                     console.log('[Cineby] HiAnime: no match, falling back to TV path');
                     // Fall through to regular TV scraping
