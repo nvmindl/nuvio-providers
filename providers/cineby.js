@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-08T23:12:46.909Z
+ * Generated: 2026-04-08T23:31:44.649Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -164,17 +164,23 @@ function findHiAnimeId(title, originalTitle, year, seasonName, seasonEpisodeCoun
     var bestId = null;
     var bestScore = 0;
     var bestHasDub = false;
+    var bestWordDiff = Infinity;
     var allResults = [];
     for (var qi = 0; qi < searchResults.length; qi++) {
       var results = searchResults[qi];
       var q = queries[qi];
+      var qWords = normTitle(q).split(" ").filter(Boolean).length;
       for (var i = 0; i < results.length; i++) {
         var anime = results[i];
         var score = titleScore(anime.name, q);
-        if (score > bestScore || score === bestScore && anime.episodes && anime.episodes.dub && !bestHasDub) {
+        var hasDub = !!(anime.episodes && anime.episodes.dub);
+        var wordDiff = Math.abs(normTitle(anime.name).split(" ").filter(Boolean).length - qWords);
+        var better = score > bestScore || score === bestScore && wordDiff < bestWordDiff || score === bestScore && wordDiff === bestWordDiff && hasDub && !bestHasDub;
+        if (better) {
           bestScore = score;
           bestId = anime.id;
-          bestHasDub = !!(anime.episodes && anime.episodes.dub);
+          bestHasDub = hasDub;
+          bestWordDiff = wordDiff;
         }
         if (score >= 0.8)
           allResults.push(anime);

@@ -1,4 +1,4 @@
-// Cineby v1.5.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// Cineby v1.6.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
 // v1.1.0: Add HiAnime path for anime
 // v1.1.1: Fix titleScore() containment-first scoring
 // v1.2.0: Route HiAnime m3u8 URLs through backend proxy (fixes web-player flash / .html segments)
@@ -11,6 +11,8 @@
 //         far fewer episodes than the TMDB season cannot win over a better-populated entry
 // v1.4.0: Performance — TMDB + server fetches in parallel, tighter timeouts, parallel HiAnime search
 // v1.5.0: Fix icon (cineby.png added to Assets); fix manifest version; per-server stream names
+// v1.6.0: Fix HiAnime title match — prefer entry whose word count equals query over shorter subsets
+//         (e.g. "Hellsing Ultimate" must beat "Hellsing" when both score 1.0)
 
 var BACKEND = 'http://145.241.158.129:3113';
 var VIDEASY_API = 'https://api.videasy.net';
@@ -145,18 +147,27 @@ async function findHiAnimeId(title, originalTitle, year, seasonName, seasonEpiso
     var bestId = null;
     var bestScore = 0;
     var bestHasDub = false;
+    var bestWordDiff = Infinity;
     var allResults = [];
 
     for (var qi = 0; qi < searchResults.length; qi++) {
         var results = searchResults[qi];
         var q = queries[qi];
+        var qWords = normTitle(q).split(' ').filter(Boolean).length;
         for (var i = 0; i < results.length; i++) {
             var anime = results[i];
             var score = titleScore(anime.name, q);
-            if (score > bestScore || (score === bestScore && anime.episodes && anime.episodes.dub && !bestHasDub)) {
+            var hasDub = !!(anime.episodes && anime.episodes.dub);
+            var wordDiff = Math.abs(normTitle(anime.name).split(' ').filter(Boolean).length - qWords);
+            // Prefer: higher score > fewer extra words (exact length match) > has dub
+            var better = score > bestScore
+                || (score === bestScore && wordDiff < bestWordDiff)
+                || (score === bestScore && wordDiff === bestWordDiff && hasDub && !bestHasDub);
+            if (better) {
                 bestScore = score;
                 bestId = anime.id;
-                bestHasDub = !!(anime.episodes && anime.episodes.dub);
+                bestHasDub = hasDub;
+                bestWordDiff = wordDiff;
             }
             if (score >= 0.8) allResults.push(anime);
         }
