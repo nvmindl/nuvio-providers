@@ -1,17 +1,9 @@
-// AnimeCloud Nuvio Provider v2.9.2
+// AnimeCloud Nuvio Provider v2.9.3
 // Direct API integration with full server-side fallback for TV compatibility.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
+// v2.9.3: Performance — tighter timeouts, parallel AniList searches, faster TMDB (drop alt_titles),
+//         parallel split-cour continuation fetches, backend pipeline timeout 60s→30s.
 // v2.9.2: Fix multi-part anime wrong episode (e.g. JoJo S4=Golden Wind not Diamond).
-//         matchAnime() now uses TMDB season air year as proximity tiebreaker so
-//         TMDB season numbers (which don't map 1:1 to Japanese Part numbers) resolve correctly.
-// v2.9.1: quality 'auto'→'1080p'/'480p', name fixed, size ''
-//         (TV network blocks it), call /animecloud/streams backend which runs entire
-//         pipeline (TMDB lookup, anime matching, episode find, decrypt) on Oracle VM.
-//         Local path still tried first for phone users (fast, no network hop to backend).
-// v2.8.0: Backend fallback triggers when crypto-js decryption returns null/empty
-// v2.7.2: Rewrite fetchWithTimeout to use AbortController (like Cineby)
-// v2.7.1: Fix TV detection — crypto-js may return empty object instead of throwing
-// v2.7.0: Server-side decryption fallback for TV (crypto-js unavailable on smart TV runtime)
 
 var CryptoJS = null;
 try {
@@ -33,8 +25,8 @@ var AC_API = 'https://khkhkhkh.com/animecp/animeapi65/';
 var RNC_PASSWORD = 'anime5w\x26f4H\x26434*';
 
 var UA = 'AnimeCloud/6.5 CFNetwork/1399 Darwin/22.1.0';
-var FETCH_TIMEOUT = 12000; // 12s default timeout
-var FETCH_TIMEOUT_LONG = 25000; // 25s for large payloads (One Piece = 310KB, 1174 episodes)
+var FETCH_TIMEOUT = 10000; // 10s default timeout
+var FETCH_TIMEOUT_LONG = 20000; // 20s for large payloads (One Piece = 310KB, 1174 episodes)
 var DECRYPT_BACKEND = 'http://145.241.158.129:3112/animecloud/video';
 var STREAMS_BACKEND = 'http://145.241.158.129:3112/animecloud/streams';
 
@@ -148,12 +140,12 @@ function bytesToWordArray(bytes) {
 
 // ── TMDB helpers ───────────────────────────────────────────────────────
 
-async function tmdbGet(path) {
+async function tmdbGet(path, timeout) {
     try {
         var url = TMDB_BASE + path + (path.indexOf('?') > -1 ? '&' : '?') + 'api_key=' + TMDB_KEY;
         var response = await fetchWithTimeout(url, {
             headers: { 'Accept': 'application/json' },
-        });
+        }, timeout || FETCH_TIMEOUT);
         if (!response.ok) return null;
         return await response.json();
     } catch (e) {
@@ -164,7 +156,7 @@ async function tmdbGet(path) {
 
 async function getTmdbDetails(tmdbId, mediaType, season) {
     var type = mediaType === 'movie' ? 'movie' : 'tv';
-    var data = await tmdbGet('/' + type + '/' + tmdbId + '?language=en-US&append_to_response=alternative_titles');
+    var data = await tmdbGet('/' + type + '/' + tmdbId + '?language=en-US', 8000);
     if (!data) return null;
 
     var titles = [];
@@ -172,11 +164,6 @@ async function getTmdbDetails(tmdbId, mediaType, season) {
     if (data.title) titles.push(data.title);
     if (data.original_name) titles.push(data.original_name);
     if (data.original_title) titles.push(data.original_title);
-
-    var alts = (data.alternative_titles || {}).results || [];
-    for (var i = 0; i < alts.length; i++) {
-        if (alts[i].title) titles.push(alts[i].title);
-    }
 
     var seen = {};
     var unique = [];
@@ -281,31 +268,36 @@ async function searchAniList(title, year) {
 }
 
 async function getAniListTitles(tmdbTitle, originalTitle, year) {
-    var titles = [];
-
-    var searchOrder = [originalTitle, tmdbTitle];
     var seen = {};
     var searches = [];
-    for (var i = 0; i < searchOrder.length; i++) {
-        if (searchOrder[i] && !seen[searchOrder[i].toLowerCase()]) {
-            seen[searchOrder[i].toLowerCase()] = true;
-            searches.push(searchOrder[i]);
+    var order = [originalTitle, tmdbTitle];
+    for (var i = 0; i < order.length; i++) {
+        if (order[i] && !seen[order[i].toLowerCase()]) {
+            seen[order[i].toLowerCase()] = true;
+            searches.push(order[i]);
         }
     }
 
+    // Fire all searches in parallel (with year and without) — take first result that returns
+    var promises = [];
     for (var i = 0; i < searches.length; i++) {
-        var result = year ? await searchAniList(searches[i], year) : null;
-        if (!result) result = await searchAniList(searches[i], null);
+        var q = searches[i];
+        if (year) promises.push(searchAniList(q, year).catch(function() { return null; }));
+        promises.push(searchAniList(q, null).catch(function() { return null; }));
+    }
 
+    var results = await Promise.all(promises);
+    for (var i = 0; i < results.length; i++) {
+        var result = results[i];
         if (result) {
+            var titles = [];
             if (result.romaji) titles.push(result.romaji);
             if (result.english) titles.push(result.english);
             if (result.native) titles.push(result.native);
-            break;
+            if (titles.length > 0) return titles;
         }
     }
-
-    return titles;
+    return [];
 }
 
 // ── Anime list cache (OPTIMIZED — strips unused fields, 2h TTL) ──────
@@ -693,7 +685,7 @@ async function getStreamsFromBackend(tmdbId, mediaType, season, episode) {
             '&mediaType=' + encodeURIComponent(mediaType) +
             '&season=' + season +
             '&episode=' + episode;
-        var resp = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 60000);
+        var resp = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } }, 30000);
         if (!resp.ok) {
             console.log('[AnimeCloud] Backend pipeline returned ' + resp.status);
             return [];
@@ -816,15 +808,23 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                     if (ya !== yb) return ya - yb;
                     return extractSeason(a.name || '') - extractSeason(b.name || '');
                 });
+
+                // Fetch all continuation episode lists in parallel
+                var contFetches = await Promise.all(continuations.map(function(c) {
+                    return acPost('getAnimeDetails', { animeID: c.id }, FETCH_TIMEOUT_LONG)
+                        .then(function(d) { return d && d.result ? { anime: c, eps: d.result } : null; })
+                        .catch(function() { return null; });
+                }));
+
                 var remaining = offsetEp;
-                for (var ci = 0; ci < continuations.length; ci++) {
-                    var contDetails = await acPost('getAnimeDetails', { animeID: continuations[ci].id }, FETCH_TIMEOUT_LONG);
-                    if (!contDetails || !contDetails.result) continue;
-                    var contEps = contDetails.result;
-                    console.log('[AnimeCloud] Checking continuation: ' + continuations[ci].name + ' (' + contEps.length + ' eps), need ep ' + remaining);
+                for (var ci = 0; ci < contFetches.length; ci++) {
+                    if (!contFetches[ci]) continue;
+                    var contEps = contFetches[ci].eps;
+                    var contAnime = contFetches[ci].anime;
+                    console.log('[AnimeCloud] Checking continuation: ' + contAnime.name + ' (' + contEps.length + ' eps), need ep ' + remaining);
                     targetEp = findEpisode(contEps, remaining);
                     if (targetEp) {
-                        matchedAnime = continuations[ci];
+                        matchedAnime = contAnime;
                         episodes = contEps;
                         console.log('[AnimeCloud] Split-cour resolved: ' + matchedAnime.name + ' ep ' + remaining);
                         break;

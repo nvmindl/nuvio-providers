@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-04-05T16:21:36.917Z
+ * Generated: 2026-04-08T13:30:28.676Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -42,8 +42,8 @@ var ANILIST_URL = "https://graphql.anilist.co";
 var AC_API = "https://khkhkhkh.com/animecp/animeapi65/";
 var RNC_PASSWORD = "anime5w&f4H&434*";
 var UA = "AnimeCloud/6.5 CFNetwork/1399 Darwin/22.1.0";
-var FETCH_TIMEOUT = 12e3;
-var FETCH_TIMEOUT_LONG = 25e3;
+var FETCH_TIMEOUT = 1e4;
+var FETCH_TIMEOUT_LONG = 2e4;
 var DECRYPT_BACKEND = "http://145.241.158.129:3112/animecloud/video";
 var STREAMS_BACKEND = "http://145.241.158.129:3112/animecloud/streams";
 function fetchWithTimeout(url, options, timeout) {
@@ -149,13 +149,13 @@ function bytesToWordArray(bytes) {
   }
   return CryptoJS.lib.WordArray.create(words, bytes.length);
 }
-function tmdbGet(path) {
+function tmdbGet(path, timeout) {
   return __async(this, null, function* () {
     try {
       var url = TMDB_BASE + path + (path.indexOf("?") > -1 ? "&" : "?") + "api_key=" + TMDB_KEY;
       var response = yield fetchWithTimeout(url, {
         headers: { "Accept": "application/json" }
-      });
+      }, timeout || FETCH_TIMEOUT);
       if (!response.ok)
         return null;
       return yield response.json();
@@ -168,7 +168,7 @@ function tmdbGet(path) {
 function getTmdbDetails(tmdbId, mediaType, season) {
   return __async(this, null, function* () {
     var type = mediaType === "movie" ? "movie" : "tv";
-    var data = yield tmdbGet("/" + type + "/" + tmdbId + "?language=en-US&append_to_response=alternative_titles");
+    var data = yield tmdbGet("/" + type + "/" + tmdbId + "?language=en-US", 8e3);
     if (!data)
       return null;
     var titles = [];
@@ -180,11 +180,6 @@ function getTmdbDetails(tmdbId, mediaType, season) {
       titles.push(data.original_name);
     if (data.original_title)
       titles.push(data.original_title);
-    var alts = (data.alternative_titles || {}).results || [];
-    for (var i = 0; i < alts.length; i++) {
-      if (alts[i].title)
-        titles.push(alts[i].title);
-    }
     var seen = {};
     var unique = [];
     for (var i = 0; i < titles.length; i++) {
@@ -281,31 +276,42 @@ function searchAniList(title, year) {
 }
 function getAniListTitles(tmdbTitle, originalTitle, year) {
   return __async(this, null, function* () {
-    var titles = [];
-    var searchOrder = [originalTitle, tmdbTitle];
     var seen = {};
     var searches = [];
-    for (var i = 0; i < searchOrder.length; i++) {
-      if (searchOrder[i] && !seen[searchOrder[i].toLowerCase()]) {
-        seen[searchOrder[i].toLowerCase()] = true;
-        searches.push(searchOrder[i]);
+    var order = [originalTitle, tmdbTitle];
+    for (var i = 0; i < order.length; i++) {
+      if (order[i] && !seen[order[i].toLowerCase()]) {
+        seen[order[i].toLowerCase()] = true;
+        searches.push(order[i]);
       }
     }
+    var promises = [];
     for (var i = 0; i < searches.length; i++) {
-      var result = year ? yield searchAniList(searches[i], year) : null;
-      if (!result)
-        result = yield searchAniList(searches[i], null);
+      var q = searches[i];
+      if (year)
+        promises.push(searchAniList(q, year).catch(function() {
+          return null;
+        }));
+      promises.push(searchAniList(q, null).catch(function() {
+        return null;
+      }));
+    }
+    var results = yield Promise.all(promises);
+    for (var i = 0; i < results.length; i++) {
+      var result = results[i];
       if (result) {
+        var titles = [];
         if (result.romaji)
           titles.push(result.romaji);
         if (result.english)
           titles.push(result.english);
         if (result.native)
           titles.push(result.native);
-        break;
+        if (titles.length > 0)
+          return titles;
       }
     }
-    return titles;
+    return [];
   });
 }
 var animeListCache = null;
@@ -646,7 +652,7 @@ function getStreamsFromBackend(tmdbId, mediaType, season, episode) {
     try {
       console.log("[AnimeCloud] Using full backend pipeline");
       var url = STREAMS_BACKEND + "?tmdbId=" + tmdbId + "&mediaType=" + encodeURIComponent(mediaType) + "&season=" + season + "&episode=" + episode;
-      var resp = yield fetchWithTimeout(url, { headers: { "Accept": "application/json" } }, 6e4);
+      var resp = yield fetchWithTimeout(url, { headers: { "Accept": "application/json" } }, 3e4);
       if (!resp.ok) {
         console.log("[AnimeCloud] Backend pipeline returned " + resp.status);
         return [];
@@ -754,16 +760,23 @@ function getStreams(tmdbId, mediaType, season, episode) {
               return ya - yb;
             return extractSeason(a.name || "") - extractSeason(b.name || "");
           });
+          var contFetches = yield Promise.all(continuations.map(function(c) {
+            return acPost("getAnimeDetails", { animeID: c.id }, FETCH_TIMEOUT_LONG).then(function(d) {
+              return d && d.result ? { anime: c, eps: d.result } : null;
+            }).catch(function() {
+              return null;
+            });
+          }));
           var remaining = offsetEp;
-          for (var ci = 0; ci < continuations.length; ci++) {
-            var contDetails = yield acPost("getAnimeDetails", { animeID: continuations[ci].id }, FETCH_TIMEOUT_LONG);
-            if (!contDetails || !contDetails.result)
+          for (var ci = 0; ci < contFetches.length; ci++) {
+            if (!contFetches[ci])
               continue;
-            var contEps = contDetails.result;
-            console.log("[AnimeCloud] Checking continuation: " + continuations[ci].name + " (" + contEps.length + " eps), need ep " + remaining);
+            var contEps = contFetches[ci].eps;
+            var contAnime = contFetches[ci].anime;
+            console.log("[AnimeCloud] Checking continuation: " + contAnime.name + " (" + contEps.length + " eps), need ep " + remaining);
             targetEp = findEpisode(contEps, remaining);
             if (targetEp) {
-              matchedAnime = continuations[ci];
+              matchedAnime = contAnime;
               episodes = contEps;
               console.log("[AnimeCloud] Split-cour resolved: " + matchedAnime.name + " ep " + remaining);
               break;
