@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-08T13:25:56.204Z
+ * Generated: 2026-04-08T16:33:28.916Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -368,7 +368,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         var serverTag = src.server ? " [" + src.server + "]" : "";
         var proxyUrl = BACKEND + "/videasy-proxy?url=" + encodeURIComponent(src.url);
         streams.push({
-          name: "Cineby",
+          name: src.server ? "Cineby " + src.server : "Cineby",
           title: quality + serverTag,
           url: proxyUrl,
           quality,

@@ -1,4 +1,4 @@
-// Cineby v1.4.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// Cineby v1.5.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
 // v1.1.0: Add HiAnime path for anime
 // v1.1.1: Fix titleScore() containment-first scoring
 // v1.2.0: Route HiAnime m3u8 URLs through backend proxy (fixes web-player flash / .html segments)
@@ -10,6 +10,7 @@
 // v1.3.1: Fix JoJo S1 wrong entry — season tiebreaker now factors in episode count so entries with
 //         far fewer episodes than the TMDB season cannot win over a better-populated entry
 // v1.4.0: Performance — TMDB + server fetches in parallel, tighter timeouts, parallel HiAnime search
+// v1.5.0: Fix icon (cineby.png added to Assets); fix manifest version; per-server stream names
 
 var BACKEND = 'http://145.241.158.129:3113';
 var VIDEASY_API = 'https://api.videasy.net';
@@ -378,7 +379,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             var proxyUrl = BACKEND + '/videasy-proxy?url=' + encodeURIComponent(src.url);
 
             streams.push({
-                name: 'Cineby',
+                name: src.server ? 'Cineby ' + src.server : 'Cineby',
                 title: quality + serverTag,
                 url: proxyUrl,
                 quality: quality,
