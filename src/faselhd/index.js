@@ -1,4 +1,4 @@
-// FaselHD v16.0.0 — Server-side scraper via Oracle backend
+// FaselHD v17.0.0 — Server-side scraper via Oracle backend
 // Backend handles: TMDB → EasyPlex → FaselHD page → VM extraction → m3u8 parsing → proxy
 // Client just calls /resolve and gets back ready-to-play 1080p/720p/360p proxied streams
 

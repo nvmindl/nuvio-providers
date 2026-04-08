@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-08T11:34:07.928Z
+ * Generated: 2026-04-08T13:03:21.872Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -25,6 +25,7 @@ var __async = (__this, __arguments, generator) => {
 
 // src/cineby/index.js
 var BACKEND = "http://145.241.158.129:3113";
+var SUBTITLE_BACKEND = "http://145.241.158.129:3114";
 var VIDEASY_API = "https://api.videasy.net";
 var VIDEASY_DB = "https://db.videasy.net/3";
 var ANIME_DB = "https://anime-db.videasy.net/api/v2/hianime";
@@ -58,6 +59,23 @@ function safeFetch(url, opts, ms) {
     if (tid)
       clearTimeout(tid);
     throw e;
+  });
+}
+function fetchArabicSubs(title, type, season, episode, imdbId, year) {
+  return __async(this, null, function* () {
+    try {
+      var url = SUBTITLE_BACKEND + "/subtitles?title=" + encodeURIComponent(title || "") + "&type=" + encodeURIComponent(type || "") + "&season=" + encodeURIComponent(season || "") + "&episode=" + encodeURIComponent(episode || "") + "&imdbId=" + encodeURIComponent(imdbId || "") + "&year=" + encodeURIComponent(year || "");
+      var resp = yield safeFetch(url, {}, 12e3);
+      if (!resp.ok)
+        return [];
+      var data = yield resp.json();
+      return (data.subtitles || []).map(function(s) {
+        return { url: s.url, lang: s.lang || "ar" };
+      });
+    } catch (e) {
+      console.log("[Cineby] fetchArabicSubs error: " + e.message);
+      return [];
+    }
   });
 }
 function getTmdbMeta(mediaType, tmdbId, season) {
@@ -272,6 +290,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
                   lang: s.lang || s.language || "Unknown"
                 };
               });
+              var arabicSubs = yield fetchArabicSubs(meta.title, "tv", seasonId, episodeId, meta.imdbId, meta.year);
+              subs = subs.concat(arabicSubs);
               var streams = [];
               for (var j = 0; j < hiSources.length; j++) {
                 var src = hiSources[j];
@@ -349,6 +369,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       var sources = data.sources || [];
       var subtitles = data.subtitles || [];
       console.log("[Cineby] " + sources.length + " sources from [" + (data.servers || []).join(", ") + "]");
+      var arabicSubs = yield fetchArabicSubs(meta.title, mType, seasonId, episodeId, meta.imdbId, meta.year);
       var streams = [];
       for (var j = 0; j < sources.length; j++) {
         var src = sources[j];
@@ -364,6 +385,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
             });
           }
         }
+        subs = subs.concat(arabicSubs);
         var quality = normalizeQuality(src.quality);
         var serverTag = src.server ? " [" + src.server + "]" : "";
         var proxyUrl = BACKEND + "/videasy-proxy?url=" + encodeURIComponent(src.url);

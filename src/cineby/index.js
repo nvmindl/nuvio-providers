@@ -1,4 +1,4 @@
-// Cineby v1.3.1 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// Cineby v1.4.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
 // v1.1.0: Add HiAnime path for anime
 // v1.1.1: Fix titleScore() containment-first scoring
 // v1.2.0: Route HiAnime m3u8 URLs through backend proxy (fixes web-player flash / .html segments)
@@ -9,8 +9,10 @@
 //         Referer/Origin headers and returns obfuscated segment extensions causing ExoPlayer failures)
 // v1.3.1: Fix JoJo S1 wrong entry — season tiebreaker now factors in episode count so entries with
 //         far fewer episodes than the TMDB season cannot win over a better-populated entry
+// v1.4.0: Inject Arabic subtitles from subtitle backend (port 3114) into all streams
 
 var BACKEND = 'http://145.241.158.129:3113';
+var SUBTITLE_BACKEND = 'http://145.241.158.129:3114';
 var VIDEASY_API = 'https://api.videasy.net';
 var VIDEASY_DB = 'https://db.videasy.net/3';
 var ANIME_DB = 'https://anime-db.videasy.net/api/v2/hianime';
@@ -41,6 +43,27 @@ function safeFetch(url, opts, ms) {
     return fetch(url, o)
         .then(function (r) { if (tid) clearTimeout(tid); return r; })
         .catch(function (e) { if (tid) clearTimeout(tid); throw e; });
+}
+
+async function fetchArabicSubs(title, type, season, episode, imdbId, year) {
+    try {
+        var url = SUBTITLE_BACKEND + '/subtitles' +
+            '?title=' + encodeURIComponent(title || '') +
+            '&type=' + encodeURIComponent(type || '') +
+            '&season=' + encodeURIComponent(season || '') +
+            '&episode=' + encodeURIComponent(episode || '') +
+            '&imdbId=' + encodeURIComponent(imdbId || '') +
+            '&year=' + encodeURIComponent(year || '');
+        var resp = await safeFetch(url, {}, 12000);
+        if (!resp.ok) return [];
+        var data = await resp.json();
+        return (data.subtitles || []).map(function(s) {
+            return { url: s.url, lang: s.lang || 'ar' };
+        });
+    } catch (e) {
+        console.log('[Cineby] fetchArabicSubs error: ' + e.message);
+        return [];
+    }
 }
 
 async function getTmdbMeta(mediaType, tmdbId, season) {
@@ -293,6 +316,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                                 };
                             });
 
+                        // Fetch Arabic subs and merge
+                        var arabicSubs = await fetchArabicSubs(meta.title, 'tv', seasonId, episodeId, meta.imdbId, meta.year);
+                        subs = subs.concat(arabicSubs);
+
                         // Format sources - quality labels already contain "Dub" / "Sub"
                         var streams = [];
                         for (var j = 0; j < hiSources.length; j++) {
@@ -393,6 +420,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         var subtitles = data.subtitles || [];
         console.log('[Cineby] ' + sources.length + ' sources from [' + (data.servers || []).join(', ') + ']');
 
+        // Fetch Arabic subs (non-blocking)
+        var arabicSubs = await fetchArabicSubs(meta.title, mType, seasonId, episodeId, meta.imdbId, meta.year);
+
         // Step 4: Format as Nuvio stream objects
         var streams = [];
         for (var j = 0; j < sources.length; j++) {
@@ -410,6 +440,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
                     });
                 }
             }
+            subs = subs.concat(arabicSubs);
 
             var quality = normalizeQuality(src.quality);
             var serverTag = src.server ? ' [' + src.server + ']' : '';
