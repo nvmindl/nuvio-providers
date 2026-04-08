@@ -1,6 +1,6 @@
 /**
  * animecloud - Built from src/animecloud/
- * Generated: 2026-04-08T13:30:28.676Z
+ * Generated: 2026-04-08T23:20:39.838Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -570,11 +570,20 @@ function parseEpisodeNumber(name) {
     return parseInt(m[1], 10);
   return -1;
 }
+function isSpecialEpisode(name) {
+  return /خاص/i.test(name) || /\b(ova|sp|special)\b/i.test(name);
+}
 function findEpisode(episodes, targetEpNum) {
   for (var i = 0; i < episodes.length; i++) {
-    var epNum = parseEpisodeNumber(episodes[i].name || "");
-    if (epNum === targetEpNum)
-      return episodes[i];
+    var ep = episodes[i];
+    if (isSpecialEpisode(ep.name || ""))
+      continue;
+    if (parseEpisodeNumber(ep.name || "") === targetEpNum)
+      return ep;
+  }
+  for (var j = 0; j < episodes.length; j++) {
+    if (parseEpisodeNumber(episodes[j].name || "") === targetEpNum)
+      return episodes[j];
   }
   return null;
 }

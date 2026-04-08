@@ -1,6 +1,9 @@
-// AnimeCloud Nuvio Provider v2.9.3
+// AnimeCloud Nuvio Provider v2.9.4
 // Direct API integration with full server-side fallback for TV compatibility.
 // Uses AnimeCloud's mobile app API with RNCryptor decryption for video URLs.
+// v2.9.4: Fix wrong episode when specials precede regular episodes in catalog
+//         (e.g. Hellsing Ultimate: "الحلقة الخاصة 1" matched before "الحلقة 1").
+//         findEpisode() now skips خاصة/OVA/SP episodes in pass 1.
 // v2.9.3: Performance — tighter timeouts, parallel AniList searches, faster TMDB (drop alt_titles),
 //         parallel split-cour continuation fetches, backend pipeline timeout 60s→30s.
 // v2.9.2: Fix multi-part anime wrong episode (e.g. JoJo S4=Golden Wind not Diamond).
@@ -594,10 +597,21 @@ function parseEpisodeNumber(name) {
     return -1;
 }
 
+function isSpecialEpisode(name) {
+    // Arabic: خاصة/خاص = special; also catch OVA/SP in any language
+    return /خاص/i.test(name) || /\b(ova|sp|special)\b/i.test(name);
+}
+
 function findEpisode(episodes, targetEpNum) {
+    // Pass 1: regular episodes only (skip specials)
     for (var i = 0; i < episodes.length; i++) {
-        var epNum = parseEpisodeNumber(episodes[i].name || '');
-        if (epNum === targetEpNum) return episodes[i];
+        var ep = episodes[i];
+        if (isSpecialEpisode(ep.name || '')) continue;
+        if (parseEpisodeNumber(ep.name || '') === targetEpNum) return ep;
+    }
+    // Pass 2: fallback to specials (e.g. show only has specials)
+    for (var j = 0; j < episodes.length; j++) {
+        if (parseEpisodeNumber(episodes[j].name || '') === targetEpNum) return episodes[j];
     }
     return null;
 }
