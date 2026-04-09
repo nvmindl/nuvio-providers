@@ -1,6 +1,6 @@
 /**
  * faselhd - Built from src/faselhd/
- * Generated: 2026-04-08T23:12:42.932Z
+ * Generated: 2026-04-09T08:14:55.828Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -24,7 +24,7 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/faselhd/index.js
-var BACKEND_BASE = "http://145.241.158.129:3112";
+var BACKEND_BASE = "https://cas-principle-bryant-knights.trycloudflare.com";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var FETCH_TIMEOUT = 3e4;
 function safeFetch(url, options, timeout) {
