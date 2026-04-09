@@ -1,4 +1,4 @@
-// Cineby v1.6.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
+// Cineby v1.7.0 — Multi-server movie/TV + HiAnime anime dub/sub via Videasy
 // v1.1.0: Add HiAnime path for anime
 // v1.1.1: Fix titleScore() containment-first scoring
 // v1.2.0: Route HiAnime m3u8 URLs through backend proxy (fixes web-player flash / .html segments)
@@ -13,8 +13,10 @@
 // v1.5.0: Fix icon (cineby.png added to Assets); fix manifest version; per-server stream names
 // v1.6.0: Fix HiAnime title match — prefer entry whose word count equals query over shorter subsets
 //         (e.g. "Hellsing Ultimate" must beat "Hellsing" when both score 1.0)
+// v1.7.0: Switch backend to HTTPS via Cloudflare Tunnel (fixes Android cleartext HTTP block —
+//         Android 9+ blocks http:// URLs by default; all proxy/decrypt calls now use HTTPS)
 
-var BACKEND = 'http://145.241.158.129:3113';
+var BACKEND = 'https://amounts-bridges-courage-learners.trycloudflare.com';
 var VIDEASY_API = 'https://api.videasy.net';
 var VIDEASY_DB = 'https://db.videasy.net/3';
 var ANIME_DB = 'https://anime-db.videasy.net/api/v2/hianime';
