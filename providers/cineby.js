@@ -1,6 +1,6 @@
 /**
  * cineby - Built from src/cineby/
- * Generated: 2026-04-09T08:11:55.303Z
+ * Generated: 2026-04-11T15:32:03.083Z
  */
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {
@@ -24,7 +24,7 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/cineby/index.js
-var BACKEND = "https://amounts-bridges-courage-learners.trycloudflare.com";
+var BACKEND = "http://145.241.158.129:3113";
 var VIDEASY_API = "https://api.videasy.net";
 var VIDEASY_DB = "https://db.videasy.net/3";
 var ANIME_DB = "https://anime-db.videasy.net/api/v2/hianime";

@@ -1,18 +1,12 @@
 {
   "name": "Nuvio Providers",
-      "version": "16.1.0",
+      "version": "16.2.0",
   "scrapers": [
     {
       "id": "FaselHD",
       "name": "FaselHD",
       "description": "Arabic Hard Sub movies, TV shows, and anime — 1080p/720p/360p streams from FaselHD CDN",
-      "version": "16.1.0",
-      "author": "Nuvio Team",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
-      "filename": "providers/faselhd.js",
+      "version": "16.2.0",
       "enabled": true,
       "formats": [
         "m3u8"
@@ -95,7 +89,7 @@
       "id": "Cineby",
       "name": "Cineby",
       "description": "Multi-server movie and TV streaming — 4K/1080p/720p from Videasy network with multilingual subtitles",
-      "version": "1.7.0",
+      "version": "1.8.0",
       "author": "Nuvio Team",
       "supportedTypes": [
         "movie",
