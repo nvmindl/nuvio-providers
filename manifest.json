@@ -7,6 +7,12 @@
       "name": "FaselHD",
       "description": "Arabic Hard Sub movies, TV shows, and anime — 1080p/720p/360p streams from FaselHD CDN",
       "version": "16.2.0",
+      "author": "Nuvio Team",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/faselhd.js",
       "enabled": true,
       "formats": [
         "m3u8"
