@@ -1,6 +1,5 @@
 {
   "name": "Nuvio Providers",
-      "version": "16.2.0",
   "scrapers": [
     {
       "id": "FaselHD",
