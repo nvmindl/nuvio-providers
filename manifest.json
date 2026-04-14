@@ -1,5 +1,6 @@
 {
   "name": "Nuvio Providers",
+  "version": "1.0.0",
   "scrapers": [
     {
       "id": "FaselHD",
@@ -17,7 +18,6 @@
         "m3u8"
       ],
       "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/faselhdx.png",
-      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/faselhdx.png",
       "contentLanguage": [
         "ar",
         "en",
@@ -39,7 +39,6 @@
         "m3u8"
       ],
       "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/kirmzi.png",
-      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/kirmzi.png",
       "contentLanguage": [
         "ar",
         "tr"
@@ -62,7 +61,6 @@
         "mp4"
       ],
       "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/witanime.png",
-      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/witanime.png",
       "contentLanguage": [
         "ar",
         "ja"
@@ -84,7 +82,6 @@
         "mp4"
       ],
       "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/animecloud.png",
-      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/animecloud.png",
       "contentLanguage": [
         "ar",
         "ja"
@@ -106,7 +103,6 @@
         "m3u8"
       ],
       "logo": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/cineby.png",
-      "icon": "https://raw.githubusercontent.com/nvmindl/nuvio-providers/main/Assets/cineby.png",
       "contentLanguage": [
         "en",
         "ar"
